@@ -1,0 +1,35 @@
+[build-system]
+requires = ["flit_core>=3.4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "grub-pal"
+version = "1.0.1"
+readme = "README.md"
+description = "Grub config assistant"
+authors = [
+    { name = "Joe Defen", email = "joedef@duck.com" }
+]
+requires-python = ">=3.8"
+dependencies = [
+    "console-window>=1.0.5",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/joedefen/grub-pal"
+
+[project.license]
+text = "MIT"
+
+[project.scripts]
+grub-pal = "grub-pal.grub-pal:main"
+

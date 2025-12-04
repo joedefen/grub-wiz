@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 {parameter-name}:
   section: {TUI grouping}
@@ -11,7 +13,8 @@
   brief: {text} # < 60 char description
   full: {text} # < 400 char detailed explanation
 """
-"""
+
+GRUB_PAL_CONFIG = r"""
 GRUB_DEFAULT:
   section: "Boot Selection"
   type: cycle
@@ -189,3 +192,11 @@ GRUB_THEME:
   brief: "Path to the directory containing a GRUB theme (optional)."
   full: "Specifies the full path to a directory containing a GRUB theme for a more polished graphical look. If unset, it uses the basic look defined by GRUB_GFXMODE."
 """
+import yaml
+
+def main():
+  config_data = yaml.safe_load(GRUB_PAL_CONFIG)
+  string = yaml.dump(config_data, default_flow_style=False)
+  print("DATA=", string)
+
+main()
