@@ -22,7 +22,7 @@ class GrubParser:
         self.vals = {}    # for those params with values
         self.other_lines = []    # original lines of params of no concern
 
-    def get_etc_default_grub(self) -> Optional[List[str]]:
+    def get_etc_default_grub(self) -> bool:
         """
         Reads the content of the /etc/default/grub file into self.lines.
         """
