@@ -12,7 +12,6 @@ authors = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "console-window>=1.0.6",
     "ruamel.yaml>=0.18.16",
 ]
 classifiers = [

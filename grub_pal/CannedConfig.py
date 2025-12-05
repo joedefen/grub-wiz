@@ -49,9 +49,9 @@ Timeout & Menu:
       0: The first entry in the menu (usually the latest OS).
       saved: The last operating system successfully booted.
     guidance: "Sets the default menu entry to boot. Can be:
-      \n. An index number (starting from 0).
-      \n. The keyword 'saved' to remember the last choice.
-      \n. A full menu entry title (case-sensitive)."
+      \n: An index number (starting from 0).
+      \n: A full menu entry title (case-sensitive).
+      \n%ENUMS%"
     checks:
       regex: ^\d+$|^saved$|^[^\s].*$ # Matches number, 'saved', or a non-empty string
     specials:
@@ -76,8 +76,8 @@ Kernel Arguments:
     default: '""'
     enums: {}
     guidance: "Arguments passed to the Linux kernel ONLY on normal boot (not recovery).
-      \n. Typical uses: video options, disabling specific drivers, or custom parameters.
-      \n. Values here are combined with GRUB_CMDLINE_LINUX_DEFAULT."
+      \n: Typical uses: video options, disabling specific drivers, or custom parameters.
+      \n: Values here are combined with GRUB_CMDLINE_LINUX_DEFAULT."
     checks: []
     specials: []
 
@@ -90,9 +90,9 @@ Kernel Arguments:
       "text": Force text mode display.
       "nomodeset": Disable kernel mode setting (useful for graphics troubleshooting).
     guidance: "Arguments passed to the Linux kernel for all boot entries (normal and recovery).
-      \n. Used for system-wide options.
-      \n. Separate multiple options with a space.
-      \n. Values here are combined with GRUB_CMDLINE_LINUX."
+      \n: Used for system-wide options.
+      \n: Separate multiple options with a space.
+      \n: Values here are combined with GRUB_CMDLINE_LINUX."
     checks: []
     specials: []
 
@@ -124,9 +124,9 @@ Appearance:
     default: ''
     enums: {}
     guidance: "Full path and filename to a background image.
-      \n. Must be a JPEG or PNG file path.
-      \n. Recommended size is screen resolution.
-      \n. Leave blank for no background image."
+      \n: Must be a JPEG or PNG file path.
+      \n: Recommended size is screen resolution.
+      \n: Leave blank for no background image."
     checks:
       regex: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Must be a file path ending in an image extension, or empty
     specials: []
@@ -135,8 +135,8 @@ Appearance:
     default: $(lsb_release -i -s)
     enums: {}
     guidance: "Sets the visible name of the operating system in the boot menu.
-      \n. By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n. Set to a custom string to change the display name."
+      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
+      \n: Set to a custom string to change the display name."
     checks: []
     specials: []
 
@@ -148,7 +148,7 @@ Appearance:
       "1024x768": Common contemporary monitor resolution.
       "auto": Let GRUB choose a suitable monitor resolution.
     guidance: "Sets the resolution for the GRUB menu display.
-      \n. Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
+      \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
       \n%ENUMS%"
     checks:
       regex: ^(auto|\d+x\d+)(,\s*(auto|\d+x\d+))*$
@@ -158,7 +158,7 @@ Appearance:
     default: ''
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
-      \n. This overrides the background image setting (GRUB_BACKGROUND)."
+      \n: This overrides the background image setting (GRUB_BACKGROUND)."
     checks:
       regex: ^/.*theme\.txt$|^$ # Must be a file path ending in theme.txt, or empty
     specials: []

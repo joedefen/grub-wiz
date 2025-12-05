@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 TODO:
- - get resolutions for terminal?
+ - menu entry management (complex)
+    - Parse top-level menuentry lines
+    - Filter out memtest/firmware entries
+    - Extract titles and show with indices
+    - Add a one-line warning about potential changes
  - [w]rite command (start of at least)
  - launch/discover grub-update or whatever
  - writing YAML into .config directory and read it first (allow user extension)
@@ -20,15 +24,17 @@ TODO:
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
+import sys
+import os
 import time
 import textwrap
 import traceback
-import sys
 import re
 from types import SimpleNamespace
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
+from .GrubCfgParser import get_top_level_grub_entries
 
 class GrubPal:
     """ TBD """
@@ -65,13 +71,18 @@ class GrubPal:
                 value = self.params[param_name]['default']
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
+        self.menu_entries = get_top_level_grub_entries()
+        try:
+            self.params['GRUB_DEFAULT']['enums'].update(self.menu_entries)
+        except Exception:
+            pass
     
     def setup_win(self):
         """TBD """
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
         spinner.add_key('help_mode', '? - toggle help screen', vals=[False, True])
-        spinner.add_key('next', 'n - next value in cycle', category='action')
+        spinner.add_key('cycle', 'c - next value in cycle', category='action')
         spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('guide', 'g - guidance toggle', vals=[True, False])
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
@@ -94,7 +105,7 @@ class GrubPal:
         header = ''
         _, _, enums, checks = self._get_enums_checks()
         if enums:
-            header += ' [n]ext'
+            header += ' [c]ycle'
         if checks:
             header += ' [e]dit'
 
@@ -156,8 +167,9 @@ class GrubPal:
             for line in lines:
                 wrapped = ''
                 if line.strip() == '%ENUMS%':
-                    value = self.param_values[param_name]
-                    for enum, descr in self.params[param_name]['enums'].items():
+                    wrapped += ': Cycle values with [c]:\n'
+                    payload = self.params[param_name]
+                    for enum, descr in payload['enums'].items():
                         star = '* ' if enum == value else '- '
                         line = f' {star}{enum}: {descr}\n'
                         wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
@@ -251,8 +263,8 @@ class GrubPal:
                     break
 
                 name, _, enums, checks = self._get_enums_checks()
-                if spins.next:
-                    spins.next = False
+                if spins.cycle:
+                    spins.cycle = False
                     if enums:
                         value = self.param_values[name]
                         choices = list(enums.keys())
@@ -267,9 +279,17 @@ class GrubPal:
 
             win.clear()
 
+def rerun_module_as_root(module_name):
+    """ rerun using the module name """
+    if os.geteuid() != 0: # Re-run the script with sudo
+        os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        vp = ['sudo', sys.executable, '-m', module_name] + sys.argv[1:]
+        os.execvp('sudo', vp)
+
 
 def main():
     """ TBD """
+    rerun_module_as_root('grub_pal.main')
     pal = GrubPal()
     print(f'{len(pal.params)=}')
     print(f'{type(pal.params['GRUB_TIMEOUT'])=}')
