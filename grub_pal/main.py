@@ -31,7 +31,10 @@ class GrubPal:
         self.params = {}
         self.positions = []
         self.prev_pos = -1024  # to detect direction
-        for section, params in self.sections.items():
+        for idx, (section, params) in enumerate(self.sections.items()):
+            if idx > 0: # blank line before sections except 1st
+                self.positions.append( SimpleNamespace(
+                    param_name=None, section_name=' '))
             self.positions.append( SimpleNamespace(
                 param_name=None, section_name=section))
             for param_name, payload in params.items():
@@ -88,7 +91,7 @@ class GrubPal:
 
     def adjust_picked_pos(self):
         """ This assumes:
-          - section names are not adjacent (no empty sections) 
+          - section names are singular or blank + section
           - the 1st entry is a section name
           - the last entry is NOT a section name
         """
@@ -97,12 +100,15 @@ class GrubPal:
         pos = max(min(len(self.positions)-1, pos), 1)
         if pos == win.pick_pos and pos == self.prev_pos:
             return pos
+        up = bool(pos >= self.prev_pos)
         ns = self.positions[pos]
-        if ns.section_name:
-            if pos >= self.prev_pos:
+        while ns.section_name:
+            if up:
                 pos += 1
             else:
                 pos -= 1
+            ns = self.positions[pos]
+        assert ns.param_name
         win.pick_pos = pos
         self.prev_pos = pos
         return pos
@@ -115,6 +121,9 @@ class GrubPal:
         emits = []
         view_size = win.scroll_view_size
         for pos, ns in enumerate(self.positions):
+            if ns.section_name == ' ':
+                win.add_body(f'{ns.section_name}')
+                continue
             if ns.section_name:
                 win.add_body(f'[{ns.section_name}]')
                 continue
