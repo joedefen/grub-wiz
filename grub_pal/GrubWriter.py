@@ -219,67 +219,6 @@ class GrubWriter:
                     print(f"Warning: Failed to clean up temporary file {temp_file.name}: {e}", file=sys.stderr)
 
 
-# --- Module-level singleton instance and convenience functions for backward compatibility ---
-
-_default_writer: Optional[GrubWriter] = None
-
-def _get_default_writer() -> GrubWriter:
-    """Get or create the default GrubWriter singleton instance."""
-    global _default_writer
-    if _default_writer is None:
-        _default_writer = GrubWriter()
-    return _default_writer
-
-
-def run_grub_update() -> Tuple[bool, str]:
-    """
-    Executes the appropriate GRUB update command found on the system.
-    This step is MANDATORY after modifying /etc/default/grub.
-
-    This is a convenience function that uses a singleton GrubWriter instance.
-
-    Returns:
-        A tuple (success: bool, message: str)
-    """
-    return _get_default_writer().run_grub_update()
-
-
-def commit_validated_grub_config(
-    contents: str,
-    target_path: Path = GRUB_DEFAULT_PATH
-) -> Tuple[bool, str]:
-    """
-    Safely commits new GRUB configuration contents to the target file.
-
-    The process is:
-    1. Write contents to a secure temporary file.
-    2. Run 'grub-script-check' on the temporary file.
-    3. If validation succeeds, copy the temporary file over the target_path.
-    4. Explicitly set permissions to 644 (rw-r--r--) for security and readability.
-    5. If validation fails, delete the temporary file and return the error.
-
-    This is a convenience function that uses a singleton GrubWriter instance.
-
-    NOTE: The caller should call run_grub_update() immediately after this function
-    if commit is successful.
-
-    Args:
-        contents: The new content of the /etc/default/grub file as a string.
-        target_path: The final destination path (defaults to /etc/default/grub).
-
-    Returns:
-        A tuple (success: bool, message: str)
-        - If success is True, message is a confirmation.
-        - If success is False, message contains the error and grub-script-check output.
-    """
-    # If a non-default path is specified, create a new writer instance
-    if target_path != GRUB_DEFAULT_PATH:
-        writer = GrubWriter(target_path)
-        return writer.commit_validated_grub_config(contents)
-
-    return _get_default_writer().commit_validated_grub_config(contents)
-
-
 # --- Example Usage (Not runnable without root/grub-script-check) ---
 if __name__ == '__main__':
     print("--- Example: GRUB Configuration Writer ---")
@@ -291,13 +230,16 @@ if __name__ == '__main__':
     # Simulate commit to a non-critical file for testing (still needs root for permissions checks)
     # Note: If grub-mkconfig is found, it will try to write to /boot/grub/grub.cfg which needs root.
     
-    # 1. Attempt commit (requires root)
-    # success, message = commit_validated_grub_config(valid_content)
+    # 1. Create a GrubWriter instance
+    # writer = GrubWriter()
+
+    # 2. Attempt commit (requires root)
+    # success, message = writer.commit_validated_grub_config(valid_content)
     # print(f"Commit Success: {success}\nMessage: {message}")
-    
-    # 2. If commit succeeded, attempt update (requires root)
+
+    # 3. If commit succeeded, attempt update (requires root)
     # if success:
-    #     update_success, update_message = run_grub_update()
+    #     update_success, update_message = writer.run_grub_update()
     #     print(f"\nUpdate Success: {update_success}\nMessage: {update_message}")
     # else:
     #     print("\nSkipping GRUB update due to failed commit.")

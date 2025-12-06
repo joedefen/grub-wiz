@@ -31,7 +31,7 @@ from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
-from .GrubWriter import commit_validated_grub_config, run_grub_update
+from .GrubWriter import GrubWriter
 
 class GrubPal:
     """ TBD """
@@ -53,6 +53,7 @@ class GrubPal:
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
+        self.grub_writer = GrubWriter()
         self.backups = None
         self.ordered_backup_pairs = None
         self._reinit()
@@ -329,11 +330,11 @@ class GrubPal:
         # print('-'*60)
         # print(contents)
         # print('-'*60)
-        commit_rv = commit_validated_grub_config(contents)
+        commit_rv = self.grub_writer.commit_validated_grub_config(contents)
         if not commit_rv[0]: # failure
             print(commit_rv[1])
         else:
-            install_rv = run_grub_update()
+            install_rv = self.grub_writer.run_grub_update()
             if install_rv[0]:
                 print(install_rv[1])
         input('\n\n===== Press ENTER to return to grub-pal ====> ')
