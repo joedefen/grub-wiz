@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """
 TODO:
- - backup grub feature
-   - backups of /etc/default/grub will be put in ~/.config/grub-pal
-   - they will look like:  YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt
-   - if there are none, on startup create one with tag=orig
-   - else check the current checksum against the list, if not there prompt
-     to backup the grub file with a given tag: default=custom (tags may not have spaces or crazy chars like "/")
-   - there will be a [r]estore menu item that brings up a new screen which is a list of backups; you can delete entries or restore entries
-   - if an entry is restored, the program reinits vs the new grub file and returns to edit screen
  - [w]rite command (start of at least)
  - launch/discover grub-update or whatever
  - writing YAML into .config directory and read it first (allow user extension)
@@ -109,6 +101,7 @@ class GrubPal:
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
+        spinner.add_key('write', 'w - write out current contents and run "grub-update"', category='action')
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
 
         self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)

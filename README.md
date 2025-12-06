@@ -71,7 +71,15 @@ Running `grub-pal` brings up a screen like:
    ENABLE_CRYPTODISK .......  false
    TERMINAL_INPUT ..........  console
 ```
-
+#### Backup and Restore
+Backup and restore features:
+ - backups of `/etc/default/grub` will be put in `~/.config/grub-pal`
+ - backups will be named `YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt`
+ - if there are no backup files, on startup `grub-pal` will automatically create one with tag='orig'
+ - if there are backup files and have the same checksum as the current `/etc/default/grub`, you are prompted to provide a tag for its backup (you can decline if you wish)
+ - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters.
+ - there is a `[R]estore` menu item that brings up a screen which is a list of backups; you can delete and restore backups
+ - if an entry is restored, the program re-initializes using restored grub file and returns to main screen
 
 👨‍💻 Development Status
 
