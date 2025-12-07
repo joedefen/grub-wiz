@@ -1,8 +1,32 @@
 #!/usr/bin/env python3
 """
 TODO:
- - [w]rite command (start of at least)
- - launch/discover grub-update or whatever
+ - track changes to parameters (old and new values)
+   - don't write immediately, but go to review screen
+   - allow undoing changes
+   - go back to main screen ESC (make ESC "go back")
+   - commit from this screen
+        Main Screen
+          ↓ [w]rite
+        Issues Screen (if issues exist)
+          - List warnings/errors
+          - Offer auto-fix for some
+          ↓ [w]rite or ESC→back
+        Review Screen
+          - Show old→new for all changes
+          - Allow undo per-param
+          ↓ [w]rite or ESC→back
+        Commit
+          - Write /etc/default/grub
+          - Run grub-update
+          ↓
+        Back to Main
+        Notes:
+            Skip issues screen if clean
+            Skip review if no changes
+            Each screen has clear "what will happen next" indicator
+            ESC always = back/cancel safely
+        Clean, intuitive, hard to accidentally break system.
  - writing YAML into .config directory and read it first (allow user extension)
  
  Backburner:
@@ -43,12 +67,12 @@ class GrubPal:
         self.spinner = None
         self.spins = None
         self.sections = None
-        self.params = {}
-        self.positions = []
-        self.mode = 'usual'  # 'restore
+        self.params = None
+        self.positions = None
+        self.mode = None
         self.prev_pos = None
         self.param_names = None
-        self.param_values = {}
+        self.param_values = None
         self.parsed = None
         self.param_name_wid = 0
         self.menu_entries = None
@@ -60,6 +84,10 @@ class GrubPal:
         
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
+        self.params = {}
+        self.positions = []
+        self.mode = 'usual'  # 'restore
+        self.param_values = {}
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
@@ -204,7 +232,7 @@ class GrubPal:
                     wrapped += ': Cycle values with [c]:\n'
                     payload = self.params[param_name]
                     for enum, descr in payload['enums'].items():
-                        star = '* ' if enum == value else '- '
+                        star = '* ' if str(enum) == str(value) else '- '
                         line = f' {star}{enum}: {descr}\n'
                         wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
                         wrapped += '\n'
