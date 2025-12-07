@@ -92,7 +92,7 @@ Kernel Arguments:
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
       \n: Separate multiple options with a space."
     checks:
-      regex: ^"\.*"$
+      regex: ^".*"$
     specials: []
 
   GRUB_CMDLINE_LINUX_DEFAULT:
@@ -105,7 +105,7 @@ Kernel Arguments:
       \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
       \n%ENUMS%"
     checks:
-      regex: ^"\.*"$
+      regex: ^".*"$
     specials: []
 
 # GRUB_DISABLE_LINUX_UUID:

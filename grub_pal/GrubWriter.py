@@ -172,7 +172,7 @@ class GrubWriter:
 
             cmd = [self.check_command, str(temp_path)]
 
-            print(f'+ {cmd[0]} {cmd[1]!r}')
+            print(f'+ {cmd[0]} {str(cmd[1])!r}')
 
             result = subprocess.run(
                 cmd,
@@ -191,7 +191,7 @@ class GrubWriter:
                 )
 
             # --- Step 3: Commit/Copy the Validated File ---
-            print(f'+ cp {temp_path!r} {self.target_path!r}')
+            print(f'+ cp {str(temp_path)!r} {str(self.target_path)!r}')
             shutil.copy2(temp_path, self.target_path)
 
             # --- Step 4: Explicitly set permissions to 644 (rw-r--r--) ---

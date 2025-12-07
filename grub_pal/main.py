@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 TODO:
- - track changes to parameters (old and new values)
+ - handle wrapping values that are long
+ - screen concept; (new func)  if self.act_on('variable', screens)
+ - (ok) track changes to parameters (old and new values)
    - don't write immediately, but go to review screen
    - allow undoing changes
    - go back to main screen ESC (make ESC "go back")
@@ -27,6 +29,23 @@ TODO:
             Each screen has clear "what will happen next" indicator
             ESC always = back/cancel safely
         Clean, intuitive, hard to accidentally break system.
+ - ALTERNATIVE:
+    - Managed Section,"Only show parameters that have changed.
+      This keeps the screen clean. If a parameter's value is the same as
+      the original file's value, it disappears from this review."
+    - New Value Line,GRUB_TIMEOUT: 5 (The currently staged value).
+       This line is the focus point for navigation and editing.
+    - Old Value Line,was: 10 (Aligned below the new value).
+      This provides the essential context for the change.
+    - Issues Line,*** Issue: Value must be > 0 (The *** severity
+      indicator works well in a TUI). This line only appears if validation fails.
+    - [u] Undo Action,"If the cursor is on the GRUB_TIMEOUT line, pressing
+      [u]undo immediately resets the new value back to the old value
+      (10 in the example). If successful, the parameter disappears from the review screen."
+    - Navigation Back,[b]ack to editor (Allows the user to return to the main
+      configuration screen if they need to change something else).
+    - Commit Action,[w]rite changes (The final commit action).
+      This should trigger the warning screen if issues still exist.
  - writing YAML into .config directory and read it first (allow user extension)
  
  Backburner:
@@ -67,12 +86,13 @@ class GrubPal:
         self.spinner = None
         self.spins = None
         self.sections = None
-        self.params = None
+        self.param_dicts = None
         self.positions = None
         self.mode = None
         self.prev_pos = None
         self.param_names = None
         self.param_values = None
+        self.prev_values = None
         self.parsed = None
         self.param_name_wid = 0
         self.menu_entries = None
@@ -84,10 +104,10 @@ class GrubPal:
         
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
-        self.params = {}
+        self.param_dicts = {}
         self.positions = []
         self.mode = 'usual'  # 'restore
-        self.param_values = {}
+        self.param_values, self.prev_values = {}, {}
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
@@ -96,10 +116,10 @@ class GrubPal:
             self.positions.append( SimpleNamespace(
                 param_name=None, section_name=section))
             for param_name, payload in params.items():
-                self.params[param_name] = payload
+                self.param_dicts[param_name] = payload
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
-        self.param_names = list(self.params.keys())
+        self.param_names = list(self.param_dicts.keys())
 
         self.parsed = GrubParser(params=self.param_names)
         self.parsed.get_etc_default_grub()
@@ -110,13 +130,14 @@ class GrubPal:
             name_wid = max(name_wid, len(param_name))
             value = self.parsed.vals.get(param_name, None)
             if value is None:
-                value = self.params[param_name]['default']
+                value = self.param_dicts[param_name]['default']
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
+        self.prev_values.update(self.param_values)
 
         self.menu_entries = get_top_level_grub_entries()
         try:
-            self.params['GRUB_DEFAULT']['enums'].update(self.menu_entries)
+            self.param_dicts['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
         self.mode = 'usual'  # 'restore
@@ -133,6 +154,8 @@ class GrubPal:
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
         spinner.add_key('write', 'w - write out current contents and run "grub-update"', category='action')
+        spinner.add_key('escape', 'ESC - back to prev screen',
+                        category="action", keys=[27,])
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
 
         self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)
@@ -143,7 +166,7 @@ class GrubPal:
         enums, checks = None, None
         pos = self.adjust_picked_pos()
         param_name = self.positions[pos].param_name
-        params = self.params[param_name]
+        params = self.param_dicts[param_name]
         enums = params.get('enums', None)
         checks = params.get('checks', None)
         return param_name, params, enums, checks
@@ -158,6 +181,15 @@ class GrubPal:
         for pair in self.ordered_backup_pairs:
             self.win.add_body(pair[1].name)
         
+    def get_diffs(self):
+        """ get the key/value pairs with differences"""
+        diffs = {}
+        for key, value in self.prev_values.items():
+            new_value = self.param_values[key]
+            if str(value) != str(new_value):
+                diffs[key] = (value, new_value)
+        return diffs
+
     def add_guided_head(self):
         """ TBD"""
         header = ''
@@ -169,6 +201,9 @@ class GrubPal:
 
         guide = 'UIDE' if self.spins.guide else 'uide'
         header += f' [g]{guide} [w]rite [R]estore ?:help [q]uit'
+        chg_cnt = len(self.get_diffs())
+        if chg_cnt:
+            header += f'   #chg={chg_cnt}'
         self.win.add_header(header)
 
     def adjust_picked_pos(self):
@@ -222,7 +257,7 @@ class GrubPal:
                 win.add_body(param_line)
                 continue
             emits.append(param_line)
-            text = self.params[param_name]['guidance']
+            text = self.param_dicts[param_name]['guidance']
             lines = text.split('\n')
             lead = '    '
             wid = win.cols - len(lead)
@@ -230,7 +265,7 @@ class GrubPal:
                 wrapped = ''
                 if line.strip() == '%ENUMS%':
                     wrapped += ': Cycle values with [c]:\n'
-                    payload = self.params[param_name]
+                    payload = self.param_dicts[param_name]
                     for enum, descr in payload['enums'].items():
                         star = '* ' if str(enum) == str(value) else '- '
                         line = f' {star}{enum}: {descr}\n'
