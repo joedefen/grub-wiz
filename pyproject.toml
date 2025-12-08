@@ -3,7 +3,7 @@ requires = ["flit_core>=3.4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "grub-pal"
+name = "grub-wiz"
 version = "1.0.1"
 readme = "README.md"
 description = "Grub config assistant"
@@ -25,11 +25,11 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/joedefen/grub-pal"
+"Homepage" = "https://github.com/joedefen/grub-wiz"
 
 [project.license]
 text = "MIT"
 
 [project.scripts]
-grub-pal = "grub-pal.grub-pal:main"
+grub-wiz = "grub-wiz.grub-wiz:main"
 

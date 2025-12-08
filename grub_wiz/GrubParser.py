@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-grub_pal.GrubParser: A utility class for safely parsing and manipulating
+grub_wiz.GrubParser: A utility class for safely parsing and manipulating
 the /etc/default/grub configuration file.
 """
 # pylint: disable=invalid-name,redefined-outer-name,too-few-public-methods

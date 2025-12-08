@@ -53,7 +53,7 @@ def get_real_user_info(app_name: str) -> dict:
 # --- Constants ---
 
 GRUB_DEFAULT_PATH = Path("/etc/default/grub")
-USER_INFO = get_real_user_info("grub-pal")
+USER_INFO = get_real_user_info("grub-wiz")
 GRUB_CONFIG_DIR = USER_INFO['config_dir']
 
 # Regex pattern for identifying backup files: YYYYMMDD-HHMMSS-{CHECKSUM}.{TAG}.bak
@@ -66,7 +66,7 @@ BACKUP_FILENAME_PATTERN = re.compile(
 class BackupMgr:
     """
     Manages backups for the /etc/default/grub configuration file.
-    Backups are stored in the real user's ~/.config/grub-pal/ location.
+    Backups are stored in the real user's ~/.config/grub-wiz/ location.
     """
     
     def __init__(self, target_path: Path = GRUB_DEFAULT_PATH, config_dir: Path = GRUB_CONFIG_DIR, user_info: dict = USER_INFO):

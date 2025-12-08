@@ -22,8 +22,8 @@ yaml.default_flow_style = False
 class CannedConfig:
     """ TBD"""
     def __init__(self):
-        # 1. Get a Traversable object for the 'grub_pal' package directory
-        resource_path = files('grub_pal') / 'canned_config.yaml'
+        # 1. Get a Traversable object for the 'grub_wiz' package directory
+        resource_path = files('grub_wiz') / 'canned_config.yaml'
         
         # 2. Open the file resource for reading
         # We use resource_path.read_text() to get the content as a string

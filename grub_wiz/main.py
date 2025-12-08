@@ -127,11 +127,11 @@ class ScreenStack:
 
                 
 
-class GrubPal:
+class GrubWiz:
     """ TBD """
     singleton = None
     def __init__(self):
-        GrubPal.singleton = self
+        GrubWiz.singleton = self
         self.win = None # place 1st
         self.guide = 'Full' # None Brief Full
         self.spinner = None
@@ -427,18 +427,18 @@ class GrubPal:
         if not self.really_wanna('commit changes and update GRUB'):
             return
 
-        contents =  "#--# NOTE: this file was built with 'grub-pal'\n"
-        contents += "#--#     - We suggest updating the following params with 'grub-pal'\n"
+        contents =  "#--# NOTE: this file was built with 'grub-wiz'\n"
+        contents += "#--#     - We suggest updating the following params with 'grub-wiz'\n"
         contents += "#--#       although not required'\n"
         for name, value in self.param_values.items():
             contents += f'{name}={value}\n'
-        contents += "#--# NOTE: following are params NOT handled by 'grub-pal'\n"
+        contents += "#--# NOTE: following are params NOT handled by 'grub-wiz'\n"
         contents += "#--#     - update these manually.\n"
         contents += ''.join(self.parsed.other_lines)
         
         self.win.stop_curses()
         print("\033[2J\033[H") # 'clear'
-        print('\n\n===== Left grub-pal to update GRUB ====> ')
+        print('\n\n===== Left grub-wiz to update GRUB ====> ')
         # print('Check for correctness...')
         # print('-'*60)
         # print(contents)
@@ -450,7 +450,7 @@ class GrubPal:
             install_rv = self.grub_writer.run_grub_update()
             if install_rv[0]:
                 print(install_rv[1])
-        input('\n\n===== Press ENTER to return to grub-pal ====> ')
+        input('\n\n===== Press ENTER to return to grub-wiz ====> ')
 
         self.win._start_curses()
         self._reinit()
@@ -560,8 +560,8 @@ def rerun_module_as_root(module_name):
 
 def main():
     """ TBD """
-    rerun_module_as_root('grub_pal.main')
-    pal = GrubPal()
+    rerun_module_as_root('grub_wiz.main')
+    pal = GrubWiz()
     time.sleep(0.5)
     pal.main_loop()
 
@@ -569,8 +569,8 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exce:
-        if GrubPal.singleton and GrubPal.singleton.win:
-            GrubPal.singleton.win.stop_curses()
+        if GrubWiz.singleton and GrubWiz.singleton.win:
+            GrubWiz.singleton.win.stop_curses()
         print("exception:", str(exce))
         print(traceback.format_exc())
         sys.exit(15)

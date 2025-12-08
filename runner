@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # runner.py
-# Located in the top-level <svr grub-pal> directory
+# Located in the top-level <svr grub-wiz> directory
 
 import runpy
 import sys
 
-# Ensure the package's top directory is on the path so 'grub-pal' can be found.
+# Ensure the package's top directory is on the path so 'grub-wiz' can be found.
 # This is usually necessary for debuggers to work correctly.
 # sys.path.insert(0, '.') 
 
 # Execute the main module of your package.
-# This mimics the behavior of the 'python -m grub-pal.grub-pal' command.
-# This assumes your main execution logic (main() function) is in grub-pal/grub-pal.py
+# This mimics the behavior of the 'python -m grub-wiz.grub-wiz' command.
+# This assumes your main execution logic (main() function) is in grub-wiz/grub-wiz.py
 if __name__ == '__main__':
     # You pass the full module path: 'package_name.module_name'
-    sys.argv[0] = 'grub-pal' # This makes sys.argv look like the real command execution
-    runpy.run_module('grub_pal.main', run_name='__main__', alter_sys=True)
+    sys.argv[0] = 'grub-wiz' # This makes sys.argv look like the real command execution
+    runpy.run_module('grub_wiz.main', run_name='__main__', alter_sys=True)

@@ -1,23 +1,23 @@
 >  **This project is very early in development ... come back later.**
 
-## GrubPal: The Friendly GRUB Bootloader Assistant
+## GrubWiz: The Friendly GRUB Bootloader Assistant
 
 A safe, simple, and reliable Text User Interface (TUI) utility for managing the most common GRUB bootloader configuration tasks on Linux systems.
 
-GrubPal provides the ease-of-use of a graphical configurator without the dependency bloat or the reputation for complex, destructive changes. It operates strictly on configuration files, making safe backups before every change.
+GrubWiz provides the ease-of-use of a graphical configurator without the dependency bloat or the reputation for complex, destructive changes. It operates strictly on configuration files, making safe backups before every change.
 
-#### Why Use GrubPal?
+#### Why Use GrubWiz?
 
 Dealing with `/etc/default/grub` and running `update-grub` manually is tedious and prone to typos. Other visual configurators often make overly aggressive changes that break the boot process.
 
-GrubPal solves this by focusing on core functionality and system safety:
+GrubWiz solves this by focusing on core functionality and system safety:
   * ✅ Safety First: Always creates a timestamped backup of your current GRUB configuration before applying any changes.
   * 💻 Curses Interface: Lightning-fast, lightweight TUI works across all environments (local, SSH, minimal installs) without requiring a desktop environment.
   * ⚙️ Targeted Configuration: Focuses only on the most essential and common configuration tasks, minimizing risk.
 
 #### Core Features
 
-GrubPal makes complex, manual configuration steps as easy as a few keystrokes in a clean interface:
+GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in a clean interface:
 1. **Boot Entry Management** TODO
     * Reorder Entries: Easily move boot entries up or down the list to change the default boot option or preferred order.
     * Set Default: Select the specific entry that should boot automatically.
@@ -37,11 +37,11 @@ GrubPal makes complex, manual configuration steps as easy as a few keystrokes in
 
 #### Installation (Hypothetical)
 
-* `grub-pal` is available on PyPI and installed via: `pipx install grub-pal`
-* `grub-pal` makes itself root using `sudo` and will prompt for password when needed.
+* `grub-wiz` is available on PyPI and installed via: `pipx install grub-wiz`
+* `grub-wiz` makes itself root using `sudo` and will prompt for password when needed.
 
-#### How to Use grub-pal
-Running `grub-pal` brings up a screen like:
+#### How to Use grub-wiz
+Running `grub-wiz` brings up a screen like:
 ```
   [n]ext [g]UIDE [q]uit
 ──────────────────────────────────────────────────────────────────
@@ -73,9 +73,9 @@ Running `grub-pal` brings up a screen like:
 ```
 #### Backup and Restore
 Backup and restore features:
- - backups of `/etc/default/grub` will be put in `~/.config/grub-pal`
+ - backups of `/etc/default/grub` will be put in `~/.config/grub-wiz`
  - backups will be named `YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt`
- - if there are no backup files, on startup `grub-pal` will automatically create one with tag='orig'
+ - if there are no backup files, on startup `grub-wiz` will automatically create one with tag='orig'
  - if there are backup files and have the same checksum as the current `/etc/default/grub`, you are prompted to provide a tag for its backup (you can decline if you wish)
  - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters.
  - there is a `[R]estore` menu item that brings up a screen which is a list of backups; you can delete and restore backups
@@ -113,11 +113,11 @@ Backup and restore features:
   * Group by severity
   * Top priority: first 2 critical checks.
 
-#### Running grub-pal at recovery time
+#### Running grub-wiz at recovery time
 
-To leverage user-installed, `grub-pal` even in minimal recovery environment of grub recovery mode:
+To leverage user-installed, `grub-wiz` even in minimal recovery environment of grub recovery mode:
 1. Remount the root filesystem as Read-Write: `mount -o remount,rw /`
-2. Execute grub-pal using its full path: `/home/{username}/.local/bin/grub-pal`
+2. Execute grub-wiz using its full path: `/home/{username}/.local/bin/grub-wiz`
 3. Make changes as needed, and "write" them to update the boot instructions.
 
 

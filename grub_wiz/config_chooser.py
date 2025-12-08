@@ -3,7 +3,7 @@ from pathlib import Path
 from importlib.resources import files
 from ruamel.yaml import YAML
 
-APP_NAME = "grub-pal"
+APP_NAME = "grub-wiz"
 CONFIG_DIR = Path.home() / ".config" / APP_NAME
 DEFAULT_CONFIG_NAME = "canned_config.yaml"
 CUSTOM_CONFIG_NAME = "custom_config.yaml"
@@ -47,7 +47,7 @@ config = get_config_data()
 ##############################
 ##############################
 
-# ~/.config/grub-pal/custom_config.yaml
+# ~/.config/grub-wiz/custom_config.yaml
 
 # 1. DELETE Section: Parameters listed here will be removed from the base config.
 delete:
