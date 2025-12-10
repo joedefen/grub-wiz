@@ -1,14 +1,5 @@
 #!/usr/bin/env
 """
-{parameter-name}:
-  section: {TUI grouping}
-  type: {cycle | input | boolean | special_list} # Controls Curses interaction
-  default: {default value from GRUB docs}
-  enums: # list of values for 'type: cycle' or 'type: special_list'
-    - value: meaning
-  regex: {regex} # Optional, for 'type: input' validation
-  brief: {text} # < 60 char description
-  full: {text} # < 400 char detailed explanation
 """
 from importlib.resources import files
 from ruamel.yaml import YAML

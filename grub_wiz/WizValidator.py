@@ -326,7 +326,7 @@ class WizValidator:
         # for parameters with fixed list of possible values, ensure one of them
         for param_name, cfg in self.param_cfg.items():
             enums = cfg.get('enums', None)
-            regex = cfg.get('regex', None)
+            regex = cfg.get('edit_re', None)
 
             # Only validate enums if no regex/range regex defined
             has_enums = isinstance(enums, dict) and len(enums) > 0

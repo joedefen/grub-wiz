@@ -178,6 +178,19 @@ For warnings, simply using the parameter name as the key (GRUB_TIMEOUT) is insuf
 Recommendation: Assign a stable, unique ID to each distinct warning check in your make_warns method, or use a composite key:
 Python
 
+
+
+Suggested default-hidden params: Hide by default (advanced/niche):
+* GRUB_HIDDEN_TIMEOUT (deprecated in favor of TIMEOUT_STYLE)
+* GRUB_RECORDFAIL_TIMEOUT (Ubuntu-specific edge case)
+* GRUB_DISABLE_SUBMENU (rarely needed)
+* GRUB_DISTRIBUTOR (cosmetic, most users don't care)
+* GRUB_GFXMODE (advanced graphics tuning)
+* GRUB_GFXPAYLOAD_LINUX (very advanced)
+* GRUB_ENABLE_CRYPTODISK (specialized encryption setups)
+* GRUB_TERMINAL_INPUT (advanced/troubleshooting)
+* GRUB_DISABLE_LINUX_UUID (very rare use case)
+
 ##### Use a composite key for suppression: PARAMETER_NAME + SEVERITY_LEVEL
 WARNING_ID = f'{p2}.{stars[4]}' # e.g., 'GRUB_SAVEDEFAULT.****'
 

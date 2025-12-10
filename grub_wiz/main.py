@@ -230,7 +230,7 @@ class GrubWiz:
 
         cfg = self.param_cfg[param_name]
         enums = cfg.get('enums', None)
-        regex = cfg.get('regex', None)
+        regex = cfg.get('edit_re', None)
         return param_name, cfg, enums, regex
 
     def add_restore_head(self):

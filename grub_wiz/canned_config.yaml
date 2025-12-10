@@ -1,6 +1,16 @@
+#   ----- SCHEMA -----
+#   {section-name}:
+#     {parameter-name}:
+#       default: {default value from GRUB docs}
+#       edit_re: {regex} # "edit" value only allow if non-empty
+#       enums: # list of values for 'type: cycle'
+#         - value: meaning
+#       guidance: {text} # < detailed parameter help
+# 
 Boot Timeout:
   GRUB_TIMEOUT:
     default: 5
+    edit_re: ^(-1|\d+)$
     enums:
       -1: infinite wait
       0: no wait
@@ -10,20 +20,20 @@ Boot Timeout:
       60: long wait
     guidance: "The timeout for the GRUB menu display.
       \n%ENUMS%"
-    regex: ^(-1|\d+)$
 
   GRUB_TIMEOUT_STYLE:
     default: menu
+    edit_re:
     enums:
       menu: Show the full menu during the timeout period.
       countdown: Show a countdown display instead of the menu.
       hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
     guidance: "What to show during TIMEOUT period. Choices:
       \n%ENUMS%"
-    regex:
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
+    edit_re: ^(\d+|$)$
     enums:
       '': Not set (disabled).
       0: No hidden timeout - show menu immediately.
@@ -32,10 +42,10 @@ Boot Timeout:
     guidance: "Delay (in seconds) before showing the menu when GRUB_TIMEOUT_STYLE='hidden'.
       \n: Leave blank if not using hidden timeout.
       \n%ENUMS%"
-    regex: ^(\d+|$)$
 
   GRUB_RECORDFAIL_TIMEOUT:
     default: 30
+    edit_re: ^\d+$
     enums:
       10: Short wait after error.
       30: Default wait after error.
@@ -43,11 +53,11 @@ Boot Timeout:
     guidance: "If the previous boot failed (e.g., kernel panic), GRUB shows a recovery menu.
       \n: This sets the timeout (in seconds) for that specific recovery menu.
       \n%ENUMS%"
-    regex: ^\d+$
 
 Menu Entries:
   GRUB_DEFAULT:
     default: 0
+    edit_re: ^\d+$|^saved$|^".*"$|^'.*'$
     enums:
       0: Boot first menu entry (usually the latest OS).
       saved: Boot previously booted OS (ensure SAVEDEFAULT is true)
@@ -55,20 +65,20 @@ Menu Entries:
       \n: An index number (starting from 0).
       \n: A full menu entry title (case-sensitive).
       \n%ENUMS%"
-    regex: ^\d+$|^saved$|^".*"$|^'.*'$
 
   GRUB_SAVEDEFAULT:
     default: 'false'
+    edit_re:
     enums:
       'false': Do not automatically save the last booted entry.
       'true': Save the last booted entry as the new default.
     guidance: "Automatically saves the last selected menu entry as the new default.
       \n: Required when GRUB_DEFAULT='saved'.
       \n%ENUMS%"
-    regex:
 
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
+    edit_re:
     enums:
       'false': Search for and automatically add other operating systems to the menu.
       'true': Do not search for other operating systems.
@@ -76,37 +86,37 @@ Menu Entries:
       for installed operating systems (like Windows, other Linux distros)
       and adding them to the boot menu.
       \n%ENUMS%"
-    regex:
 
   GRUB_DISABLE_RECOVERY:
     default: 'false'
+    edit_re:
     enums:
       'false': Generate recovery mode boot entries.
       'true': Suppress recovery mode entries from menu.
     guidance: "Controls whether recovery mode boot entries appear in the menu.
       \n%ENUMS%"
-    regex:
 
   GRUB_DISABLE_SUBMENU:
     default: 'false'
+    edit_re:
     enums:
       'false': Group older kernels in a submenu (cleaner).
       'true': Show all kernel versions at top level (verbose).
     guidance: "Controls whether older kernels are nested in a submenu.
       \n%ENUMS%"
-    regex:
 
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
     default: '""'
+    edit_re: ^".*"$
     enums: {}
     guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
       \n: Separate multiple options with a space."
-    regex: ^".*"$
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     default: '"quiet splash"'
+    edit_re: ^".*"$
     enums:
       '"quiet splash"': Default Ubuntu/Debian setting (hides boot messages)
       '"text"': Force text mode display early in boot process
@@ -114,35 +124,35 @@ Kernel Arguments:
     guidance: "Kernel arguments ONLY for normal boots (not recovery).
       \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
       \n%ENUMS%"
-    regex: ^".*"$
 
 Visual Appearance:
   GRUB_DISTRIBUTOR:
     default: $(lsb_release -i -s)
+    edit_re: ^(".*"|'.*')$
     enums: {}
     guidance: "Sets the visible name of the operating system in the boot menu.
       \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
       \n: Set to a custom string to change the display name."
-    regex: ^(".*"|'.*')$
 
   GRUB_BACKGROUND:
     default: ''
+    edit_re: (?i)^/.*(\.png|\.jpg|\.jpeg)$|^$
     enums: {}
     guidance: "Full path and filename to a background image.
       \n: Must be a JPEG or PNG file path.
       \n: Recommended size is screen resolution.
       \n: Leave blank for no background image."
-    regex: (?i)^/.*(\.png|\.jpg|\.jpeg)$|^$
 
   GRUB_THEME:
     default: ''
+    edit_re: (?i)^/.*theme\.txt$|^$
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
-    regex_i: ^/.*theme\.txt$|^$ # Case-insensitive: accepts theme.txt/Theme.txt etc
 
   GRUB_GFXMODE:
     default: 640x480
+    edit_re: ^(auto|keep|\d+x\d+)(,\s*(auto|keep|\d+x\d+))*$
     enums:
       "640x480": Most widely available monitor resolution.
       "800x600": Older standard monitor resolution.
@@ -152,10 +162,10 @@ Visual Appearance:
     guidance: "Sets the resolution for the GRUB menu display.
       \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
       \n%ENUMS%"
-    regex: ^(auto|keep|\d+x\d+)(,\s*(auto|keep|\d+x\d+))*$
 
   GRUB_GFXPAYLOAD_LINUX:
     default: ''
+    edit_re: ^(text|keep|\d+x\d+)?$ # text, keep, resolution, or empty
     enums:
       '': Use default (text mode).
       text: Force text mode for kernel boot.
@@ -163,11 +173,11 @@ Visual Appearance:
     guidance: "Graphics mode passed to Linux kernel at boot.
       \n: 'keep' may help with graphics driver issues.
       \n%ENUMS%"
-    regex: ^(text|keep|\d+x\d+)?$ # text, keep, resolution, or empty
 
 Security & Advanced:
   GRUB_ENABLE_CRYPTODISK:
     default: 'false'
+    edit_re:
     enums:
       'false': Disable encrypted disk support.
       'true': Enable detection and unlocking of encrypted drives (e.g., LUKS).
@@ -175,24 +185,23 @@ Security & Advanced:
       GRUB files and the boot partition which is
       needed for systems with full disk encryption.
       \n%ENUMS%"
-    regex:
 
   GRUB_TERMINAL_INPUT:
     default: console
+    edit_re:
     enums:
       console: Use the standard terminal/monitor.
       serial: Use a serial port for input.
     guidance: "Defines the input device for the GRUB command line and menu.
       \nMost desktop users should use 'console'."
-    regex:
 
 
   GRUB_DISABLE_LINUX_UUID:
     default: 'false'
+    edit_re:
     enums:
       'false': Use UUIDs (Recommended - not prone breaks when disks moved)
       'true': Use device names (e.g., /dev/sda1) instead of UUIDs
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
       \n%ENUMS%"
-    regex:
