@@ -183,6 +183,7 @@ class GrubWriter:
 
             if result.returncode != 0:
                 error_output = result.stdout.strip() + "\n" + result.stderr.strip()
+                shutil.copy2(temp_path, '/tmp/ERROR_grub_check')
                 return False, (
                     f"FAILED: {self.check_command} returned {result.returncode}.\n"
                     f"Your changes were NOT saved to {self.target_path}.\n"

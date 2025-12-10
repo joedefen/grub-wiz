@@ -10,10 +10,7 @@ Boot Timeout:
       60: long wait
     guidance: "The timeout for the GRUB menu display.
       \n%ENUMS%"
-    checks:
-      regex: ^-?\d+$
-      min: -1
-      max: 300
+    regex: ^(-1|\d+)$
 
   GRUB_TIMEOUT_STYLE:
     default: menu
@@ -23,7 +20,7 @@ Boot Timeout:
       hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
     guidance: "What to show during TIMEOUT period. Choices:
       \n%ENUMS%"
-    checks: []
+    regex:
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
@@ -35,9 +32,7 @@ Boot Timeout:
     guidance: "Delay (in seconds) before showing the menu when GRUB_TIMEOUT_STYLE='hidden'.
       \n: Leave blank if not using hidden timeout.
       \n%ENUMS%"
-    checks:
-      regex: ^\d+$|^$
-      min: 0
+    regex: ^(\d+|$)$
 
   GRUB_RECORDFAIL_TIMEOUT:
     default: 30
@@ -48,9 +43,7 @@ Boot Timeout:
     guidance: "If the previous boot failed (e.g., kernel panic), GRUB shows a recovery menu.
       \n: This sets the timeout (in seconds) for that specific recovery menu.
       \n%ENUMS%"
-    checks:
-      regex: ^\d+$
-      min: 0
+    regex: ^\d+$
 
 Menu Entries:
   GRUB_DEFAULT:
@@ -62,8 +55,7 @@ Menu Entries:
       \n: An index number (starting from 0).
       \n: A full menu entry title (case-sensitive).
       \n%ENUMS%"
-    checks:
-      regex: ^\d+$|^saved$|^".*"$|^'.*'$
+    regex: ^\d+$|^saved$|^".*"$|^'.*'$
 
   GRUB_SAVEDEFAULT:
     default: 'false'
@@ -73,7 +65,7 @@ Menu Entries:
     guidance: "Automatically saves the last selected menu entry as the new default.
       \n: Required when GRUB_DEFAULT='saved'.
       \n%ENUMS%"
-    checks: []
+    regex:
 
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
@@ -84,7 +76,7 @@ Menu Entries:
       for installed operating systems (like Windows, other Linux distros)
       and adding them to the boot menu.
       \n%ENUMS%"
-    checks: []
+    regex:
 
   GRUB_DISABLE_RECOVERY:
     default: 'false'
@@ -93,7 +85,7 @@ Menu Entries:
       'true': Suppress recovery mode entries from menu.
     guidance: "Controls whether recovery mode boot entries appear in the menu.
       \n%ENUMS%"
-    checks: []
+    regex:
 
   GRUB_DISABLE_SUBMENU:
     default: 'false'
@@ -102,7 +94,7 @@ Menu Entries:
       'true': Show all kernel versions at top level (verbose).
     guidance: "Controls whether older kernels are nested in a submenu.
       \n%ENUMS%"
-    checks: []
+    regex:
 
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
@@ -111,8 +103,7 @@ Kernel Arguments:
     guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
       \n: Separate multiple options with a space."
-    checks:
-      regex: ^".*"$
+    regex: ^".*"$
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     default: '"quiet splash"'
@@ -123,8 +114,7 @@ Kernel Arguments:
     guidance: "Kernel arguments ONLY for normal boots (not recovery).
       \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
       \n%ENUMS%"
-    checks:
-      regex: ^".*"$
+    regex: ^".*"$
 
 Visual Appearance:
   GRUB_DISTRIBUTOR:
@@ -133,8 +123,7 @@ Visual Appearance:
     guidance: "Sets the visible name of the operating system in the boot menu.
       \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
       \n: Set to a custom string to change the display name."
-    checks:
-      regex: ^(".*"|'.*')$
+    regex: ^(".*"|'.*')$
 
   GRUB_BACKGROUND:
     default: ''
@@ -143,16 +132,14 @@ Visual Appearance:
       \n: Must be a JPEG or PNG file path.
       \n: Recommended size is screen resolution.
       \n: Leave blank for no background image."
-    checks:
-      regex_i: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Case-insensitive: accepts .png/.PNG etc
+    regex: (?i)^/.*(\.png|\.jpg|\.jpeg)$|^$
 
   GRUB_THEME:
     default: ''
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
-    checks:
-      regex_i: ^/.*theme\.txt$|^$ # Case-insensitive: accepts theme.txt/Theme.txt etc
+    regex_i: ^/.*theme\.txt$|^$ # Case-insensitive: accepts theme.txt/Theme.txt etc
 
   GRUB_GFXMODE:
     default: 640x480
@@ -165,8 +152,7 @@ Visual Appearance:
     guidance: "Sets the resolution for the GRUB menu display.
       \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
       \n%ENUMS%"
-    checks:
-      regex: ^(auto|keep|\d+x\d+)(,\s*(auto|keep|\d+x\d+))*$
+    regex: ^(auto|keep|\d+x\d+)(,\s*(auto|keep|\d+x\d+))*$
 
   GRUB_GFXPAYLOAD_LINUX:
     default: ''
@@ -177,8 +163,7 @@ Visual Appearance:
     guidance: "Graphics mode passed to Linux kernel at boot.
       \n: 'keep' may help with graphics driver issues.
       \n%ENUMS%"
-    checks:
-      regex: ^(text|keep|\d+x\d+)?$ # text, keep, resolution, or empty
+    regex: ^(text|keep|\d+x\d+)?$ # text, keep, resolution, or empty
 
 Security & Advanced:
   GRUB_ENABLE_CRYPTODISK:
@@ -190,7 +175,7 @@ Security & Advanced:
       GRUB files and the boot partition which is
       needed for systems with full disk encryption.
       \n%ENUMS%"
-    checks: []
+    regex:
 
   GRUB_TERMINAL_INPUT:
     default: console
@@ -199,7 +184,7 @@ Security & Advanced:
       serial: Use a serial port for input.
     guidance: "Defines the input device for the GRUB command line and menu.
       \nMost desktop users should use 'console'."
-    checks: []
+    regex:
 
 
   GRUB_DISABLE_LINUX_UUID:
@@ -210,4 +195,4 @@ Security & Advanced:
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
       \n%ENUMS%"
-    checks: []
+    regex:

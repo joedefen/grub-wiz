@@ -140,7 +140,7 @@ class Clue:
     A semi-formal object that enforces fixed required fields (cat, ident) 
     and accepts arbitrary keyword arguments.
     """
-    def __init__(self, cat: str, ident: str='', **kwargs: Any):
+    def __init__(self, cat: str, ident: str='', keys='', **kwargs: Any):
         """
         Initializes the Clue object.
 
@@ -157,6 +157,7 @@ class Clue:
              
         self.cat = cat
         self.ident = ident
+        self.keys = keys
 
         # 2. Forgiving Variable Field Assignment
         # Iterate over the arbitrary keyword arguments (kwargs)
@@ -175,7 +176,6 @@ class GrubWiz:
     def __init__(self):
         GrubWiz.singleton = self
         self.win = None # place 1st
-        self.guide = 'Full' # None Brief Full
         self.spinner = None
         self.spins = None
         self.sections = None
@@ -207,6 +207,7 @@ class GrubWiz:
         self.param_values, self.prev_values = {}, {}
         self.param_defaults = {}
         self.must_reviews = None
+        self.ss = None
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
@@ -251,7 +252,7 @@ class GrubWiz:
         spinner.add_key('help_mode', '? - enter help screen', category='action')
         spinner.add_key('cycle', 'c - cycle value to next ', category='action')
         spinner.add_key('edit', 'e - edit value', category='action')
-        spinner.add_key('guide', 'g - guidance toggle', vals=[True, False])
+        spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
@@ -265,15 +266,23 @@ class GrubWiz:
         self.win.opt_return_if_pos_change = True
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
         
-    def _get_enums_checks(self):
+    def _get_enums_regex(self):
         """ TBD"""
-        enums, checks = None, None
-        pos = self.adjust_picked_pos()
-        param_name = self.positions[pos].param_name
-        params = self.param_cfg[param_name]
-        enums = params.get('enums', None)
-        checks = params.get('checks', None)
-        return param_name, params, enums, checks
+        enums, regex, param_name = None, None, None
+        pos = self.win.pick_pos
+        if self.ss.is_curr(HOME_ST):
+            param_name = self.positions[pos].param_name
+        elif self.ss.is_curr(REVIEW_ST):
+            clue = self.clues[pos]
+            if clue.cat == 'param':
+                param_name = clue.ident
+        if not param_name:
+            return '', {}, {}, ''
+
+        cfg = self.param_cfg[param_name]
+        enums = cfg.get('enums', None)
+        regex = cfg.get('regex', None)
+        return param_name, cfg, enums, regex
 
     def add_restore_head(self):
         """ TBD """
@@ -290,7 +299,10 @@ class GrubWiz:
             Presumes the body was created and self.clues[]
             is populated.
         """
-        header = '[d]elete [r]estore ?:help [q]uit'
+        picked, header = self.win.pick_pos, ''
+        if 0 <= picked < len(self.clues):
+            header += self.clues[picked].keys
+        header += ' [w]rite ?:help [q]uit'
         self.win.add_header(header)
 
     def add_review_body(self):
@@ -322,7 +334,8 @@ class GrubWiz:
                             continue
                         if other_name not in self.must_reviews:
                             self.must_reviews.append(other_name)
-                self.must_reviews.append(param_name)
+                if param_name not in self.must_reviews:
+                    self.must_reviews.append(param_name)
             
         for param_name in self.must_reviews:
             if param_name in diffs:
@@ -336,70 +349,25 @@ class GrubWiz:
                 item.heys += heys
 
         self.clues = []
+        picked = self.win.pick_pos
 
         for param_name, ns in reviews.items():
-            dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-            self.win.add_body(f'  {param_name[5:]} {dots}  {ns.value}')
-            self.clues.append(Clue('param', param_name))
+            pos = len(self.clues)
+            param_line, keys = self.body_param_line(param_name, pos, picked)
+            changed = bool(ns.old_value is not None and str(ns.value) != str(ns.old_value))
+            self.win.add_body(param_line)
+            if changed:
+                keys = ' [u]ndo' + keys
+            self.clues.append(Clue('param', param_name, keys=keys))
 
-            if ns.old_value is not None and str(ns.value) != str(ns.old_value):
+            if changed:
                 self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {ns.old_value}')
                 self.clues.append(Clue('nop'))
             for hey in ns.heys:
                 self.win.add_body(f'  {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
-                self.clues.append(Clue('issue', f'{param_name}.{len(hey[0])}'))
+                self.clues.append(Clue('issue', f'{param_name}.{len(hey[0])}',
+                                       keys=' [h]ide'))
 
-
-
-    def is_other_os_heuristic(self) -> bool:
-        """
-        Performs a quick heuristic check for common non-Linux partition types.
-        Targets NTFS, VFAT, and specific Windows GUIDs.
-        """
-        if self.is_other_os is not None:
-            return self.is_other_os
-        
-        self.is_other_os = False # presume false until decided otherwise
-        
-        cmd = ['lsblk', '-o', 'FSTYPE,PARTTYPE', '-J'] 
-
-        try:
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                check=False # Don't raise error on non-zero exit code
-            )
-            
-            if result.returncode != 0:
-                # If lsblk fails (e.g., permissions), we can't check
-                return self.is_other_os 
-
-            data = json.loads(result.stdout)
-            
-            for device in data.get('blockdevices', []):
-                if 'children' in device:
-                    for partition in device['children']:
-                        # Check for common Windows filesystem types
-                        fstype = partition.get('FSTYPE', '').lower()
-                        if fstype in ('ntfs', 'vfat', 'fat32', 'exfat'):
-                            self.is_other_os = True
-                            return self.is_other_os
-                            
-                        # Check for specific Windows partition GUIDs (PARTTYPE)
-                        # Example: Windows Recovery Partition GUID
-                        parttype = partition.get('PARTTYPE', '').lower()
-                        if 'de94bba4-06d9-4d40-a16a-bfd50179d6ac' in parttype:
-                            self.is_other_os = True
-                            return self.is_other_os
-                                
-        except (FileNotFoundError, json.JSONDecodeError):
-            # Timeout occurred, lsblk not found, or bad JSON output
-            pass
-            
-        return self.is_other_os
-
-        
     def get_diffs(self):
         """ get the key/value pairs with differences"""
         diffs = {}
@@ -412,10 +380,10 @@ class GrubWiz:
     def add_guided_head(self):
         """ TBD"""
         header = ''
-        _, _, enums, checks = self._get_enums_checks()
+        _, _, enums, regex = self._get_enums_regex()
         if enums:
             header += ' [c]ycle'
-        if checks:
+        if regex:
             header += ' [e]dit'
 
         guide = 'UIDE' if self.spins.guide else 'uide'
@@ -484,11 +452,42 @@ class GrubWiz:
         self.prev_pos = pos
         return pos
 
+    def body_param_line(self, param_name, pos, picked, guided=False):
+        """ Build a body line for a param """
+        cfg = self.param_cfg[param_name]
+        enums = cfg.get('enums', [])
+        regex = cfg.get('regex', None)
+        keys = ''
+        if enums:
+            keys += ' [c]ycle'
+        if regex:
+            keys += ' [e]dit'
+        value = self.param_values[param_name]
+        dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
+        param_line = f'  {param_name[5:]} {dots}  {value}'
+        if pos != picked:
+            return param_line, keys
+        if not guided:
+            more = ''
+            if enums:
+                more += '   CYCLE:' # going to add enums
+                for choice in enums.keys():
+                    if str(value) == str(choice):
+                        more += ' ><'
+                    elif len(str(choice)) > 0:
+                        more += f' {choice}'
+                    else:
+                        more += " ''"
+            if regex and enums:
+                more += ' or EDIT'
+            param_line += more
+        return param_line, keys
+
 
     def add_guided_body(self):
         """ TBD """
         win = self.win # short hand
-        picked = self.adjust_picked_pos()
+        picked = win.pick_pos
         emits = []
         view_size = win.scroll_view_size
         for pos, ns in enumerate(self.positions):
@@ -500,30 +499,13 @@ class GrubWiz:
                 continue
 
             param_name = ns.param_name
-            cfg = self.param_cfg[param_name]
-            enums = cfg.get('enums', [])
-            checks = cfg.get('checks', [])
-            value = self.param_values[param_name]
-            dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-            param_line = f'  {param_name[5:]} {dots}  {value}'
+            param_line, _ = self.body_param_line(
+                            param_name, pos, picked, self.spins.guide)
             if not self.spins.guide or pos != picked:
                 win.add_body(param_line)
-                if pos != picked:
-                    continue
-                more = ''
-                if enums:
-                    more += '   CYCLE:' # going to add enums
-                    for choice in enums.keys():
-                        if str(value) == str(choice):
-                            more += ' ><'
-                        elif len(str(choice)) > 0:
-                            more += f' {choice}'
-                        else:
-                            more += " ''"
-                if checks and enums:
-                    more += ' or EDIT'
-                win.add_body(more, resume=True)
                 continue
+            cfg = self.param_cfg[param_name]
+            value = self.param_values[param_name]
             emits.append(param_line)
             text = self.param_cfg[param_name]['guidance']
             lines = text.split('\n')
@@ -556,18 +538,14 @@ class GrubWiz:
         if over > 0:
             win.scroll_pos += over # scroll back by number of out-of-view lines
 
-    def edit_param(self, win, name, checks):
+    def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""
         value = self.param_values[name]
         valid = False
         hint, pure_regex = '', ''
-        for key, check in checks.items():
-            if key in ('regex', 'regex_i'):
-                pure_regex = check.encode().decode('unicode_escape')
-                case = '_i' if key == 'regex_i' else ''
-                hint += f'  pat{case}={pure_regex}'
-            else:
-                hint += f'  {key}={check}'
+        if regex:
+            pure_regex = regex.encode().decode('unicode_escape')
+            hint += f'  pat={pure_regex}'
         hint = hint[2:]
 
         while not valid:
@@ -576,31 +554,8 @@ class GrubWiz:
             if value is None: # aborted
                 return
             valid = True # until proven otherwise
-            for key, check in checks.items():
-                if key in ('regex', 'regex_i'):
-                    flags = re.IGNORECASE if key == 'regex_i' else 0
-                    if not re.match(check, str(value), flags=flags):
-                        suffix = ' (ign case)' if key == 'regex_i' else ''
-                        valid, hint = False, f'must match{suffix}: {pure_regex}'
-                        break
-                elif key in ['min', 'max']:
-                    ival = value
-                    if isinstance(check, int):
-                        try:
-                            ival = int(value)
-                        except Exception:
-                            valid, hint = False, 'must be int'
-                            break
-                    else:
-                        assert isinstance(check, str), f'Check {key} must be int or str'
-                    if key == 'min' and ival < check:
-                        valid, hint = False, f'must be >= {check}'
-                        break
-                    if key == 'max' and ival > check:
-                        valid, hint = False, f'must be <= {check}'
-                        break
-                else:
-                    assert False, f'Unknown check key: {key}'
+            if regex and not re.match(regex, str(value)):
+                valid, hint = False, f'must match: {pure_regex}'
 
         self.param_values[name] = value
         
@@ -663,18 +618,23 @@ class GrubWiz:
         # print('-'*60)
         # print(contents)
         # print('-'*60)
+        ok = True
         commit_rv = self.grub_writer.commit_validated_grub_config(contents)
         if not commit_rv[0]: # failure
             print(commit_rv[1])
+            ok = False
         else:
             install_rv = self.grub_writer.run_grub_update()
             if install_rv[0]:
                 print(install_rv[1])
+                ok = False
         input('\n\n===== Press ENTER to return to grub-wiz ====> ')
 
         self.win._start_curses()
-        self._reinit()
-        self.do_start_up_backup()
+        if ok:
+            self._reinit()
+            self.ss = ScreenStack(self.win, self.spins, SCREENS)
+            self.do_start_up_backup()
 
     def find_in(self, value, enums=None, cfg=None):
         """ Find the value in the list of choices using only
@@ -736,6 +696,8 @@ class GrubWiz:
             if key is None:
                 if self.ss.is_curr(REVIEW_ST):
                     self.adjust_picked_pos_w_clues()
+                if self.ss.is_curr(HOME_ST):
+                    self.adjust_picked_pos()
 
             if key is not None:
                 self.spinner.do_key(key, win)
@@ -746,11 +708,9 @@ class GrubWiz:
                     else:
                         break
 
-                name, _, enums, checks = '', None, [], []
-                if self.ss.is_curr(HOME_ST):
-                    name, _, enums, checks = self._get_enums_checks()
-                # if spins.cycle:
-                    # spins.cycle = False
+                name, _, enums, regex = '', None, {}, ''
+                if self.ss.is_curr((HOME_ST, REVIEW_ST)):
+                    name, _, enums, regex = self._get_enums_regex()
                 if self.ss.act_in('escape'):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
@@ -760,15 +720,15 @@ class GrubWiz:
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
                     self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
 
-                if self.ss.act_in('cycle', HOME_ST):
+                if self.ss.act_in('cycle', (HOME_ST, REVIEW_ST)):
                     if enums:
                         value = self.param_values[name]
                         found = self.find_in(value, enums)
                         self.param_values[name] = found.next_value
 
-                if self.ss.act_in('edit', HOME_ST):
-                    if checks:
-                        self.edit_param(win, name, checks)
+                if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
+                    if regex:
+                        self.edit_param(win, name, regex)
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
@@ -791,6 +751,7 @@ class GrubWiz:
                         self.prev_pos = self.ss.pop()
                         assert self.ss.is_curr(HOME_ST)
                         self._reinit()
+                        self.ss = ScreenStack(self.win, self.spins, SCREENS)
                         self.do_start_up_backup()
 
                 if self.ss.act_in('delete', RESTORE_ST):

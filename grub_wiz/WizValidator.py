@@ -326,18 +326,28 @@ class WizValidator:
         # for parameters with fixed list of possible values, ensure one of them
         for param_name, cfg in self.param_cfg.items():
             enums = cfg.get('enums', None)
-            checks = cfg.get('checks', None)
+            regex = cfg.get('regex', None)
 
-            # Only validate enums if no regex/range checks defined
+            # Only validate enums if no regex/range regex defined
             has_enums = isinstance(enums, dict) and len(enums) > 0
-            has_no_checks = not checks or (isinstance(checks, (list, dict)) and len(checks) == 0)
+            has_no_regex = not regex or (isinstance(regex, (list, dict)) and len(regex) == 0)
 
-            if has_enums and has_no_checks and param_name in vals:
+            if has_enums and has_no_regex and param_name in vals:
                 value = str(unquote(vals[param_name]))
                 found = any(value == unquote(str(k)) for k in enums.keys())
 
                 if not found:
                     hey(param_name, 3, 'value not in list of allowed values')
+
+        timeout_limits = {
+            'GRUB_TIMEOUT': (60, 'over 60s seems ill advised'),
+            'GRUB_RECORDFAIL_TIMEOUT': (120, 'over 120s seems ill advised'),
+            'GRUB_HIDDEN_TIMEOUT': (10, 'over 10s seems ill advised'),
+        }
+        for param, (limit, msg) in timeout_limits.items():
+            val = str(unquote(vals.get(param)))
+            if val and val.isdigit() and int(val) > limit:
+                hey(param, 1, msg)  # Low severity - just a suggestion
 
         return warns
 
@@ -371,6 +381,9 @@ class WizValidator:
 
             ('TIMEOUT=5 with TIMEOUT_STYLE=countdown',
              {'GRUB_TIMEOUT': '5', 'GRUB_TIMEOUT_STYLE': 'countdown'}),
+
+            ('TIMEOUT=500 being excessive',
+             {'GRUB_TIMEOUT': 500}),
 
             ('Nonexistent background path',
              {'GRUB_BACKGROUND': '/nonexistent/image.png'}),
