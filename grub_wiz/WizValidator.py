@@ -90,6 +90,29 @@ class WizValidator:
             # If lsblk is missing or JSON output is bad, the default 'False' result will be cached.
             pass
 
+        # --- D. UEFI Boot Entry Detection (more accurate for multi-boot) ---
+        # Supplement partition-based detection with firmware boot entries
+        if not result.has_another_os:  # Only check if not already detected
+            try:
+                efi_process = subprocess.run(
+                    ['efibootmgr'],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+                if efi_process.returncode == 0:
+                    # Count active boot entries (lines starting with "Boot" and containing "*")
+                    boot_entries = [
+                        line for line in efi_process.stdout.split('\n')
+                        if line.startswith('Boot') and '*' in line
+                    ]
+                    # If 2+ active boot entries, likely multi-boot setup
+                    if len(boot_entries) >= 2:
+                        result.has_another_os = True
+            except (FileNotFoundError, PermissionError):
+                # efibootmgr not installed or insufficient permissions
+                pass
+
         # 4. Cache and Return
         self._disk_layout_cache = result
         return result
@@ -243,6 +266,36 @@ class WizValidator:
         if vals.get(p1) in quotes('true') and not layout.is_luks_active:
             hey(p1, 1, 'enabled but no LUKS encryption detected')
 
+        # --- Best Practice Check 4: Recovery cmdline set but recovery disabled ---
+        p1, p2 = 'GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY'
+        if vals.get(p1) and vals.get(p2) in quotes('true'):
+            hey(p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
+
+        # --- Best Practice Check 5: Both UUID types disabled (fragile config) ---
+        p1, p2 = 'GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID'
+        if vals.get(p1) in quotes('true') and vals.get(p2) in quotes('true'):
+            hey(p1, 2, 'using device names for everything is fragile')
+            hey(p2, 2, 'using device names for everything is fragile')
+
+        # --- Best Practice Check 6: Terminal I/O mismatch ---
+        p1, p2 = 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT'
+        val_in = unquote(vals.get(p1, 'console'))
+        val_out = unquote(vals.get(p2, ''))
+        if val_out and val_in != val_out:
+            if 'serial' in val_in or 'serial' in val_out:
+                hey(p1, 2, f'"{val_in}" but {sh(p2)}="{val_out}" (should match)')
+
+        # --- Best Practice Check 7: Serial config consistency ---
+        p1, p2, p3 = 'GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT'
+        serial_cmd = vals.get(p1, '')
+        term_in = unquote(vals.get(p2, 'console'))
+        term_out = unquote(vals.get(p3, ''))
+        has_serial_term = 'serial' in term_in or 'serial' in term_out
+        if serial_cmd and not has_serial_term:
+            hey(p1, 2, f'set but no serial terminal configured')
+        if has_serial_term and not serial_cmd:
+            hey(p2 if 'serial' in term_in else p3, 2, 'serial terminal needs SERIAL_COMMAND set')
+
         # --- Advanced Check 1: SAVEDEFAULT=true but DEFAULT is numeric ---
         # The GRUB documentation discourages this because a numeric default can change
         # if the menu entries are reordered.
@@ -387,6 +440,24 @@ class WizValidator:
 
             ('Nonexistent background path',
              {'GRUB_BACKGROUND': '/nonexistent/image.png'}),
+
+            ('Recovery cmdline but recovery disabled',
+             {'GRUB_CMDLINE_LINUX_RECOVERY': '"nomodeset"', 'GRUB_DISABLE_RECOVERY': 'true'}),
+
+            ('Both UUID types disabled (fragile)',
+             {'GRUB_DISABLE_LINUX_UUID': 'true', 'GRUB_DISABLE_LINUX_PARTUUID': 'true'}),
+
+            ('Terminal I/O mismatch',
+             {'GRUB_TERMINAL_INPUT': 'serial', 'GRUB_TERMINAL_OUTPUT': 'console'}),
+
+            ('Serial terminal without SERIAL_COMMAND',
+             {'GRUB_TERMINAL_INPUT': 'serial'}),
+
+            ('SERIAL_COMMAND without serial terminal',
+             {'GRUB_SERIAL_COMMAND': '"serial --unit=0 --speed=115200"'}),
+
+            ('Invalid VIDEO_BACKEND value',
+             {'GRUB_VIDEO_BACKEND': 'invalid_backend'}),
 
             ('Clean config - no issues',
              {}),

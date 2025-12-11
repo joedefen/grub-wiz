@@ -125,6 +125,14 @@ Kernel Arguments:
       \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
       \n%ENUMS%"
 
+  GRUB_CMDLINE_LINUX_RECOVERY:
+    default: ''
+    edit_re: ^".*"$|^$
+    enums: {}
+    guidance: "Kernel arguments specifically for recovery mode boots.
+      \n: If empty, uses GRUB_CMDLINE_LINUX.
+      \n: Use to override recovery mode behavior."
+
 Visual Appearance:
   GRUB_DISTRIBUTOR:
     default: $(lsb_release -i -s)
@@ -174,6 +182,34 @@ Visual Appearance:
       \n: 'keep' may help with graphics driver issues.
       \n%ENUMS%"
 
+  GRUB_VIDEO_BACKEND:
+    default: ''
+    edit_re:
+    enums:
+      '': Auto-detect (recommended).
+      vbe: VESA BIOS Extensions (legacy systems).
+      efi_gop: EFI Graphics Output Protocol (UEFI systems).
+      efi_uga: EFI UGA (older UEFI systems).
+      ieee1275_fb: IEEE 1275 framebuffer (PowerPC/SPARC).
+      coreboot_fb: Coreboot framebuffer (Chromebooks/embedded).
+    guidance: "Forces a specific graphics backend driver.
+      \n: Only change if having display issues with GRUB menu.
+      \n%ENUMS%"
+
+  GRUB_INIT_TUNE:
+    default: ''
+    edit_re: ^".*"$|^$
+    enums:
+      '': No beep (silent).
+      '"480 440 1"': Single beep (A note).
+      '"480 440 1 0 1 440 1"': Double beep.
+      '"800 262 1 330 1 392 1 523 1"': Startup chime (C-E-G-C).
+      '"480 392 2"': Low alert tone.
+    guidance: "Speaker beep sequence when GRUB starts.
+      \n: Format: \"tempo freq1 duration1 freq2 duration2 ...\"
+      \n: 0 Hz = silence (for pauses between tones).
+      \n%ENUMS%"
+
 Security & Advanced:
   GRUB_ENABLE_CRYPTODISK:
     default: 'false'
@@ -205,3 +241,50 @@ Security & Advanced:
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
       \n%ENUMS%"
+
+  GRUB_DISABLE_LINUX_PARTUUID:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Use PARTUUIDs when available (recommended).
+      'true': Use device names instead of partition UUIDs.
+    guidance: "Controls whether partition UUIDs are used.
+      \n: Similar to DISABLE_LINUX_UUID but for partition identifiers.
+      \n%ENUMS%"
+
+  GRUB_TERMINAL_OUTPUT:
+    default: ''
+    edit_re:
+    enums:
+      '': Auto-detect output device.
+      console: Standard terminal/monitor output.
+      serial: Serial port output.
+      gfxterm: Graphical terminal with theme support.
+    guidance: "Defines the output device for GRUB display.
+      \n: Pair with GRUB_TERMINAL_INPUT for serial console setups.
+      \n%ENUMS%"
+
+  GRUB_SERIAL_COMMAND:
+    default: ''
+    edit_re: ^".*"$|^$
+    enums: {}
+    guidance: "Configuration for serial console connection.
+      \n: Format: \"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"
+      \n: Required when using serial terminal for server management."
+
+  GRUB_PRELOAD_MODULES:
+    default: ''
+    edit_re: ^".*"$|^$
+    enums: {}
+    guidance: "Space-separated list of GRUB modules to load early.
+      \n: Example: \"lvm mdraid1x\" for LVM/RAID support.
+      \n: Usually auto-detected; only set if having boot issues."
+
+  GRUB_BADRAM:
+    default: ''
+    edit_re: ^".*"$|^$
+    enums: {}
+    guidance: "Memory address ranges to exclude from use (faulty RAM workaround).
+      \n: Format: \"0xStartAddr,0xMask,0xStartAddr,0xMask,...\"
+      \n: Example: \"0x01234567,0xfefefefe,0x89abcdef,0xefefefef\"
+      \n: Only use if you have documented bad RAM addresses."

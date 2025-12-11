@@ -10,6 +10,25 @@ from typing import Set, Dict, Any, Optional
 # GRUB_DEFAULT_PATH = Path('/etc/default/grub')
 # GRUB_CONFIG_DIR = Path('/home/user/.config/grub-wiz') # The real user's config directory
 # USER_INFO = {'uid': 1000, 'gid': 1000} # Real user's UID/GID
+
+DEFAULT HIDES:
+    GRUB_HIDDEN_TIMEOUT (deprecated/confusing)
+    GRUB_RECORDFAIL_TIMEOUT (Ubuntu-specific)
+    GRUB_DISABLE_SUBMENU (rarely changed)
+    GRUB_DISTRIBUTOR (cosmetic)
+    GRUB_GFXMODE (advanced)
+    GRUB_GFXPAYLOAD_LINUX (very advanced)
+    GRUB_VIDEO_BACKEND (troubleshooting only)
+    GRUB_INIT_TUNE (novelty)
+    GRUB_ENABLE_CRYPTODISK (specialized)
+    GRUB_TERMINAL_INPUT (advanced)
+    GRUB_DISABLE_LINUX_UUID (rare)
+    GRUB_CMDLINE_LINUX_RECOVERY (edge case)
+    GRUB_DISABLE_LINUX_PARTUUID (rare)
+    GRUB_TERMINAL_OUTPUT (server/serial)
+    GRUB_SERIAL_COMMAND (server/serial)
+    GRUB_PRELOAD_MODULES (server/troubleshooting)
+    GRUB_BADRAM (rare hardware issue)
 # ---
 
 class BackupMgr:
