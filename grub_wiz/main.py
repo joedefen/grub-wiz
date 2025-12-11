@@ -128,6 +128,7 @@ class GrubWiz:
         self.param_cfg = None
         self.positions = None
         self.seen_positions = None
+        self.hidden_stats = None
         self.prev_pos = None
         self.defined_param_names = None # all of them
         self.param_names = None
@@ -218,10 +219,10 @@ class GrubWiz:
         spinner.add_key('edit', 'e,ENTER - edit value', category='action',
                             keys=[ord('e'), 10, 13])
         spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
-        spinner.add_key('hide', 'h - hide param or issue', category='action')
-        spinner.add_key('hard_hide', 'H - hard-hide param', category='action')
+        spinner.add_key('hide', 'h - toggle soft-hide param or hide issue', category='action')
+        spinner.add_key('hard_hide', 'H - toggle hard-hide param', category='action')
         spinner.add_key('unhide', '^ - un-hide param or issue', category='action')
-        spinner.add_key('show_hidden', 'S - show all hidden items')
+        spinner.add_key('show_hidden', 's - show hidden params/warnings', vals=[False, True])
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
@@ -362,6 +363,19 @@ class GrubWiz:
         if chg_cnt:
             header += f'   #chg={chg_cnt}'
         self.win.add_header(header)
+        if self.hidden_stats.soft + self.hidden_stats.hard == 0:
+            return
+        header = '   [s]HOW hidden:'
+        if not self.spins.show_hidden:
+            header = header.lower()
+        if self.hidden_stats.soft:
+            header += f' {self.hidden_stats.soft} soft'
+        if self.hidden_stats.hard:
+            if self.hidden_stats.soft:
+                header += ','
+            header += f' {self.hidden_stats.hard} hard'
+        header += ' params'
+        self.win.add_header(header)
 
     def adjust_picked_pos(self):
         """ This assumes:
@@ -439,6 +453,9 @@ class GrubWiz:
         cfg = self.param_cfg[param_name]
         enums = cfg.get('enums', [])
         regex = cfg.get('regex', None)
+        marker = ' '
+        marker = '-' if self.hider.is_hidden_soft_param(param_name) else marker
+        marker = '=' if self.hider.is_hidden_hard_param(param_name) else marker
         keys = ''
         if enums:
             keys += ' [c]ycle'
@@ -446,7 +463,7 @@ class GrubWiz:
             keys += ' [e]dit'
         value = self.param_values[param_name]
         dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-        param_line = f'  {param_name[5:]} {dots}  {value}'
+        param_line = f'{marker} {param_name[5:]} {dots}  {value}'
         if pos != picked:
             return param_line, keys
         if not guided:
@@ -467,6 +484,7 @@ class GrubWiz:
 
     def add_home_body(self):
         """ TBD """
+        self.hidden_stats = SimpleNamespace(soft=0, hard=0, warn=0)
         win = self.win # short hand
         picked = win.pick_pos
         emits = []
@@ -474,7 +492,10 @@ class GrubWiz:
         found_current = False
         self.seen_positions = []
         for ns in self.positions:
-            if not ns.param_name or not self.hider.is_hidden_param(ns.param_name):
+            self.hidden_stats.hard += int(self.hider.is_hidden_hard_param(ns.param_name))
+            self.hidden_stats.soft += int(self.hider.is_hidden_soft_param(ns.param_name))
+            if (not ns.param_name or self.spins.show_hidden
+                    or not self.hider.is_hidden_param(ns.param_name)):
                 self.seen_positions.append(ns)
         for pos, ns in enumerate(self.seen_positions):
             if ns.section_name == ' ':
@@ -681,9 +702,9 @@ class GrubWiz:
 
             else: # HOME_ST screen
                 win.set_pick_mode(True)
-                self.add_home_head()
                 if not self.add_home_body():
                     seconds = 0.1 # not on current (so adjust quickly)
+                self.add_home_head()
 
             win.render()
             key = win.prompt(seconds=seconds)
@@ -738,7 +759,23 @@ class GrubWiz:
 
                 if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST) and name:
-                        self.hider.hide_soft_param(name)
+                        if self.hider.is_hidden_soft_param(name):
+                            self.hider.unhide_param(name)
+                        else:
+                            self.hider.hide_soft_param(name)
+                        self.hider.write_if_dirty()
+
+                if self.ss.act_in('hard_hide', (HOME_ST, REVIEW_ST)):
+                    if self.ss.is_curr(HOME_ST) and name:
+                        if self.hider.is_hidden_hard_param(name):
+                            self.hider.unhide_param(name)
+                        else:
+                            self.hider.hide_hard_param(name)
+                        self.hider.write_if_dirty()
+
+                if self.ss.act_in('unhide', (HOME_ST, REVIEW_ST)):
+                    if self.ss.is_curr(HOME_ST) and name:
+                        self.hider.unhide_param(name)
                         self.hider.write_if_dirty()
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
