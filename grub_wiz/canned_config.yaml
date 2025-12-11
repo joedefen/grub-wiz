@@ -6,6 +6,7 @@
 #       enums: # list of values for 'type: cycle'
 #         - value: meaning
 #       guidance: {text} # < detailed parameter help
+#       hide: {False|True}
 # 
 Boot Timeout:
   GRUB_TIMEOUT:
@@ -20,6 +21,7 @@ Boot Timeout:
       60: long wait
     guidance: "The timeout for the GRUB menu display.
       \n%ENUMS%"
+    hide: False
 
   GRUB_TIMEOUT_STYLE:
     default: menu
@@ -30,6 +32,7 @@ Boot Timeout:
       hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
     guidance: "What to show during TIMEOUT period. Choices:
       \n%ENUMS%"
+    hide: False
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
@@ -39,9 +42,11 @@ Boot Timeout:
       0: No hidden timeout - show menu immediately.
       3: Brief hidden countdown before showing menu.
       5: Medium hidden countdown before showing menu.
-    guidance: "Delay (in seconds) before showing the menu when GRUB_TIMEOUT_STYLE='hidden'.
-      \n: Leave blank if not using hidden timeout.
+    guidance: "DEPRECATED: Obsolete in GRUB 2.00+. Use GRUB_TIMEOUT with GRUB_TIMEOUT_STYLE='hidden' instead.
+      \n: This parameter was used in old GRUB versions (<2.00) to hide the menu.
+      \n: Modern GRUB ignores this - use TIMEOUT_STYLE and TIMEOUT instead.
       \n%ENUMS%"
+    hide: hard # deprecated in favor of TIMEOUT + TIMEOUT_STYLE
 
   GRUB_RECORDFAIL_TIMEOUT:
     default: 30
@@ -53,6 +58,7 @@ Boot Timeout:
     guidance: "If the previous boot failed (e.g., kernel panic), GRUB shows a recovery menu.
       \n: This sets the timeout (in seconds) for that specific recovery menu.
       \n%ENUMS%"
+    hide: True # Ubuntu only for some reason
 
 Menu Entries:
   GRUB_DEFAULT:
@@ -65,6 +71,7 @@ Menu Entries:
       \n: An index number (starting from 0).
       \n: A full menu entry title (case-sensitive).
       \n%ENUMS%"
+    hide: False
 
   GRUB_SAVEDEFAULT:
     default: 'false'
@@ -75,6 +82,7 @@ Menu Entries:
     guidance: "Automatically saves the last selected menu entry as the new default.
       \n: Required when GRUB_DEFAULT='saved'.
       \n%ENUMS%"
+    hide: False
 
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
@@ -86,6 +94,7 @@ Menu Entries:
       for installed operating systems (like Windows, other Linux distros)
       and adding them to the boot menu.
       \n%ENUMS%"
+    hide: False
 
   GRUB_DISABLE_RECOVERY:
     default: 'false'
@@ -95,6 +104,7 @@ Menu Entries:
       'true': Suppress recovery mode entries from menu.
     guidance: "Controls whether recovery mode boot entries appear in the menu.
       \n%ENUMS%"
+    hide:  # core setting, commonly used
 
   GRUB_DISABLE_SUBMENU:
     default: 'false'
@@ -104,6 +114,7 @@ Menu Entries:
       'true': Show all kernel versions at top level (verbose).
     guidance: "Controls whether older kernels are nested in a submenu.
       \n%ENUMS%"
+    hide: True  # rarely wanted/needed
 
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
@@ -113,6 +124,7 @@ Kernel Arguments:
     guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
       \n: Separate multiple options with a space."
+    hide: False
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     default: '"quiet splash"'
@@ -124,6 +136,7 @@ Kernel Arguments:
     guidance: "Kernel arguments ONLY for normal boots (not recovery).
       \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
       \n%ENUMS%"
+    hide: False
 
   GRUB_CMDLINE_LINUX_RECOVERY:
     default: ''
@@ -132,6 +145,7 @@ Kernel Arguments:
     guidance: "Kernel arguments specifically for recovery mode boots.
       \n: If empty, uses GRUB_CMDLINE_LINUX.
       \n: Use to override recovery mode behavior."
+    hide: True  # edge case, rarely needed
 
 Visual Appearance:
   GRUB_DISTRIBUTOR:
@@ -141,6 +155,7 @@ Visual Appearance:
     guidance: "Sets the visible name of the operating system in the boot menu.
       \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
       \n: Set to a custom string to change the display name."
+    hide: True  # cosmentic mostly don't care
 
   GRUB_BACKGROUND:
     default: ''
@@ -150,6 +165,7 @@ Visual Appearance:
       \n: Must be a JPEG or PNG file path.
       \n: Recommended size is screen resolution.
       \n: Leave blank for no background image."
+    hide:  # commonly used for customization
 
   GRUB_THEME:
     default: ''
@@ -157,6 +173,7 @@ Visual Appearance:
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
+    hide:  # commonly used for customization
 
   GRUB_GFXMODE:
     default: 640x480
@@ -170,6 +187,7 @@ Visual Appearance:
     guidance: "Sets the resolution for the GRUB menu display.
       \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
       \n%ENUMS%"
+    hide: True # advanced graphics tuning
 
   GRUB_GFXPAYLOAD_LINUX:
     default: ''
@@ -181,6 +199,7 @@ Visual Appearance:
     guidance: "Graphics mode passed to Linux kernel at boot.
       \n: 'keep' may help with graphics driver issues.
       \n%ENUMS%"
+    hide: True  # very advanced
 
   GRUB_VIDEO_BACKEND:
     default: ''
@@ -195,6 +214,7 @@ Visual Appearance:
     guidance: "Forces a specific graphics backend driver.
       \n: Only change if having display issues with GRUB menu.
       \n%ENUMS%"
+    hide: True  # troubleshooting only, advanced
 
   GRUB_INIT_TUNE:
     default: ''
@@ -209,6 +229,7 @@ Visual Appearance:
       \n: Format: \"tempo freq1 duration1 freq2 duration2 ...\"
       \n: 0 Hz = silence (for pauses between tones).
       \n%ENUMS%"
+    hide: True  # novelty feature
 
 Security & Advanced:
   GRUB_ENABLE_CRYPTODISK:
@@ -221,6 +242,7 @@ Security & Advanced:
       GRUB files and the boot partition which is
       needed for systems with full disk encryption.
       \n%ENUMS%"
+    hide: True  # specialized encryption setups
 
   GRUB_TERMINAL_INPUT:
     default: console
@@ -230,6 +252,7 @@ Security & Advanced:
       serial: Use a serial port for input.
     guidance: "Defines the input device for the GRUB command line and menu.
       \nMost desktop users should use 'console'."
+    hide: True # advanced troubleshooting
 
 
   GRUB_DISABLE_LINUX_UUID:
@@ -241,6 +264,7 @@ Security & Advanced:
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
       \n%ENUMS%"
+    hide: True # very rare use case
 
   GRUB_DISABLE_LINUX_PARTUUID:
     default: 'false'
@@ -251,6 +275,7 @@ Security & Advanced:
     guidance: "Controls whether partition UUIDs are used.
       \n: Similar to DISABLE_LINUX_UUID but for partition identifiers.
       \n%ENUMS%"
+    hide: True  # rare use case
 
   GRUB_TERMINAL_OUTPUT:
     default: ''
@@ -263,6 +288,7 @@ Security & Advanced:
     guidance: "Defines the output device for GRUB display.
       \n: Pair with GRUB_TERMINAL_INPUT for serial console setups.
       \n%ENUMS%"
+    hide: True  # server/serial console setups
 
   GRUB_SERIAL_COMMAND:
     default: ''
@@ -271,6 +297,7 @@ Security & Advanced:
     guidance: "Configuration for serial console connection.
       \n: Format: \"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"
       \n: Required when using serial terminal for server management."
+    hide: True  # server/serial console setups
 
   GRUB_PRELOAD_MODULES:
     default: ''
@@ -279,6 +306,7 @@ Security & Advanced:
     guidance: "Space-separated list of GRUB modules to load early.
       \n: Example: \"lvm mdraid1x\" for LVM/RAID support.
       \n: Usually auto-detected; only set if having boot issues."
+    hide: True  # troubleshooting, usually auto-detected
 
   GRUB_BADRAM:
     default: ''
@@ -288,3 +316,4 @@ Security & Advanced:
       \n: Format: \"0xStartAddr,0xMask,0xStartAddr,0xMask,...\"
       \n: Example: \"0x01234567,0xfefefefe,0x89abcdef,0xefefefef\"
       \n: Only use if you have documented bad RAM addresses."
+    hide: True  # rare hardware issue workaround

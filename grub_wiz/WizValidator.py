@@ -198,21 +198,6 @@ class WizValidator:
             if vals[p2] not in quotes('true'):
                 hey(p2, 4, f'must be "true" since {sh(p1)} is "saved"')
 
-        # --- Critical Check 2: DEFAULT=hidden & HIDDEN_TIMEOUT ---
-        p1, p2 = 'GRUB_DEFAULT', 'GRUB_HIDDEN_TIMEOUT'
-        # The grub documentation implies that "0" or "unset" means no timeout, which is the main issue.
-        # We check if DEFAULT is hidden AND the HIDDEN_TIMEOUT is effectively zero/missing.
-        if vals.get(p1) in quotes('hidden'):
-            # Check if p2 is '0', '0.0', missing, or None (allowing for quoted forms)
-            is_zero_or_missing = (
-                vals.get(p2) is None or
-                vals.get(p2) in quotes('0') or
-                vals.get(p2) in quotes('0.0')
-            )
-
-            if is_zero_or_missing:
-                hey(p2, 4, f'should be positive int when {sh(p1)} is "hidden"')
-
         # --- Best Practice Check 1: TIMEOUT=0 & TIMEOUT_STYLE=hidden ---
         p1, p2 = 'GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE'
         # Check if TIMEOUT is 0 (or equivalent) AND the style is 'hidden'
@@ -292,7 +277,7 @@ class WizValidator:
         term_out = unquote(vals.get(p3, ''))
         has_serial_term = 'serial' in term_in or 'serial' in term_out
         if serial_cmd and not has_serial_term:
-            hey(p1, 2, f'set but no serial terminal configured')
+            hey(p1, 2, 'set but no serial terminal configured')
         if has_serial_term and not serial_cmd:
             hey(p2 if 'serial' in term_in else p3, 2, 'serial terminal needs SERIAL_COMMAND set')
 
@@ -395,7 +380,6 @@ class WizValidator:
         timeout_limits = {
             'GRUB_TIMEOUT': 60,
             'GRUB_RECORDFAIL_TIMEOUT': 120,
-            'GRUB_HIDDEN_TIMEOUT': 10,
         }
         for param_name, limit in timeout_limits.items():
             val = str(unquote(vals.get(param_name)))

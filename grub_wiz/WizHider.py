@@ -1,28 +1,11 @@
 #!/usr/bin/env python3
 """
-DEFAULT HIDES:
-    GRUB_HIDDEN_TIMEOUT (deprecated/confusing)
-    GRUB_RECORDFAIL_TIMEOUT (Ubuntu-specific)
-    GRUB_DISABLE_SUBMENU (rarely changed)
-    GRUB_DISTRIBUTOR (cosmetic)
-    GRUB_GFXMODE (advanced)
-    GRUB_GFXPAYLOAD_LINUX (very advanced)
-    GRUB_VIDEO_BACKEND (troubleshooting only)
-    GRUB_INIT_TUNE (novelty)
-    GRUB_ENABLE_CRYPTODISK (specialized)
-    GRUB_TERMINAL_INPUT (advanced)
-    GRUB_DISABLE_LINUX_UUID (rare)
-    GRUB_CMDLINE_LINUX_RECOVERY (edge case)
-    GRUB_DISABLE_LINUX_PARTUUID (rare)
-    GRUB_TERMINAL_OUTPUT (server/serial)
-    GRUB_SERIAL_COMMAND (server/serial)
-    GRUB_PRELOAD_MODULES (server/troubleshooting)
-    GRUB_BADRAM (rare hardware issue)
+TBD
 """
 
-from ruamel.yaml import YAML
 from pathlib import Path
 from typing import Set, Dict, Any, Optional
+from ruamel.yaml import YAML, YAMLError
 
 from .UserConfigDir import get_user_config_dir
 
@@ -32,9 +15,8 @@ yaml.default_flow_style = False
 
 class WizHider:
     """
-    Manages the persistent storage and state for hidden parameters and suppressed warnings.
-    Supports both hard-hiding (excluded from everything) and soft-hiding (hidden from UI
-    but still validated and written to config).
+    Manages the persistent storage and state for hidden parameters
+    and hidden/suppressed warnings.
     """
 
     def __init__(self, user_config=None, filename: str = 'hidden-items.yaml'):
@@ -50,9 +32,8 @@ class WizHider:
         self.config_dir: Path = self.user_config.config_dir
         self.yaml_path: Path = self.config_dir / filename
 
-        self.hard_params: Set[str] = set()  # Hard-hidden params (excluded from everything)
-        self.soft_params: Set[str] = set()  # Soft-hidden params (hidden from UI only)
-        self.warns: Set[str] = set()        # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
+        self.params: Set[str] = set()  # hidden params (excluded from everything)
+        self.warns: Set[str] = set()   # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
 
@@ -62,28 +43,26 @@ class WizHider:
 
     def refresh(self):
         """Reads the hidden items from the YAML file, clearing the current state on failure."""
-        self.hard_params.clear()
-        self.soft_params.clear()
+        self.params.clear()
         self.warns.clear()
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
-        
+
         if not self.yaml_path.exists():
             return
-            
+
         try:
             with self.yaml_path.open('r') as f:
                 data: Dict[str, Any] = yaml.load(f) or {}
-                
+
             # Safely cast list data to sets
-            self.hard_params.update(set(data.get('hard_params', [])))
-            self.soft_params.update(set(data.get('soft_params', [])))
+            self.params.update(set(data.get('params', [])))
             self.warns.update(set(data.get('warns', [])))
-            
+
             # Record file modification time
             self.last_read_time = self.yaml_path.stat().st_mtime
-            
-        except (IOError, yaml.YAMLError) as e:
+
+        except (IOError, YAMLError) as e:
             # Any failure leads to empty sets, allowing the application to continue.
             print(f"Warning: Failed to read hidden-items.yaml: {e}")
 
@@ -93,8 +72,7 @@ class WizHider:
             return False
 
         data = {
-            'hard_params': sorted(list(self.hard_params)),
-            'soft_params': sorted(list(self.soft_params)),
+            'params': sorted(list(self.params)),
             'warns': sorted(list(self.warns))
         }
 
@@ -115,31 +93,17 @@ class WizHider:
             print(f"Error writing or setting permissions on hidden-items.yaml: {e}")
             return False
 
-    def hide_hard_param(self, name: str):
+    def hide_param(self, name: str):
         """Hides a parameter by name (e.g., 'GRUB_DEFAULT')."""
-        if name in self.soft_params:
-            self.soft_params.remove(name)
-            self.dirty_count += 1
-        if name not in self.hard_params:
-            self.hard_params.add(name)
+        if name not in self.params:
+            self.params.add(name)
             self.dirty_count += 1
 
-    def hide_soft_param(self, name: str):
-        """Hides a parameter by name (e.g., 'GRUB_DEFAULT')."""
-        if name in self.hard_params:
-            self.hard_params.remove(name)
-            self.dirty_count += 1
-        if name not in self.soft_params:
-            self.soft_params.add(name)
-            self.dirty_count += 1
 
     def unhide_param(self, name: str):
-        """Unhides a parameter by name (removes from both hard and soft)."""
-        if name in self.hard_params:
-            self.hard_params.remove(name)
-            self.dirty_count += 1
-        if name in self.soft_params:
-            self.soft_params.remove(name)
+        """Unhides a parameter by name."""
+        if name in self.params:
+            self.params.remove(name)
             self.dirty_count += 1
 
     def hide_warn(self, composite_id: str):
@@ -153,18 +117,10 @@ class WizHider:
         if composite_id in self.warns:
             self.warns.remove(composite_id)
             self.dirty_count += 1
-            
+
     def is_hidden_param(self, name: str) -> bool:
         """Checks if a parameter should be hidden."""
-        return name in self.soft_params or name in self.hard_params
-
-    def is_hidden_soft_param(self, name: str) -> bool:
-        """Checks if a parameter should be hidden."""
-        return name in self.soft_params
-
-    def is_hidden_hard_param(self, name: str) -> bool:
-        """Checks if a parameter should be hidden."""
-        return name in self.hard_params
+        return name in self.params
 
     def is_hidden_warn(self, composite_id: str) -> bool:
         """Checks if a warning should be suppressed."""
