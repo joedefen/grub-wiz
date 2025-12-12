@@ -217,12 +217,15 @@ class WizValidator:
             return tuple([None] * (num_keys * 2))
 
         def hey_if(bad, param_name, severity, message):
+            nonlocal all_warn_keys
             if bad:
                 hey(param_name, severity, message)
+            if param_name:
+                all_warn_keys.add(f'{param_name} {message}')
         # ------------------------------------------------ #
 
         stars = [''] + '* ** *** ****'.split()
-        warns = {}
+        warns, all_warn_keys = {}, set()
         layout = self.probe_disk_layout()
 
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
@@ -275,11 +278,15 @@ class WizValidator:
         bad = p1 and v1 and v2 in quotes('true')
         hey_if(bad, p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
 
-        # Both UUID types disabled (fragile config)
+        # UUID types disabled (both or individually)
         p1, v1, p2, v2 = getvals('GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID')
-        bad = p1 and v1 in quotes('true') and v2 in quotes('true')
-        hey_if(bad, p1, 2, 'using device names for everything is fragile')
-        hey_if(bad, p2, 2, 'using device names for everything is fragile')
+        both_disabled = p1 and v1 in quotes('true') and v2 in quotes('true')
+        only_p1 = p1 and v1 in quotes('true') and v2 not in quotes('true')
+        only_p2 = p2 and v2 in quotes('true') and v1 not in quotes('true')
+        hey_if(both_disabled, p1, 2, 'using device names for everything is fragile')
+        hey_if(both_disabled, p2, 2, 'using device names for everything is fragile')
+        hey_if(only_p1, p1, 1, 'disabling UUID may cause boot issues')
+        hey_if(only_p2, p2, 1, 'disabling PARTUUID may cause boot issues')
 
         # Terminal INPUT should match OUTPUT when serial
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
@@ -393,7 +400,7 @@ class WizValidator:
         bad = p1 and val and val.isdigit() and int(val) > 120
         hey_if(bad, p1, 1, 'over 120s seems ill advised')
 
-        return warns
+        return warns, all_warn_keys
 
     def demo(self, param_defaults):
         """ TBD """

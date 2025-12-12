@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
 TODO:
- - implement hidden on review screen
- - refactor if expr: hey(args) to
-      bad = expr; hey_if(bad, args)
-      so all keys can be collected for retiring ones
  - implement reset config data
  - replace [x] with underscored x in header
  - handle wrapping param / warns that are long
- - implement warn purging .. change sig to param + text
  - (maybe) writing YAML into .config directory and read it first (allow user extension)
 """
 # pylint: disable=invalid_name,broad-exception-caught
@@ -155,6 +150,8 @@ class GrubWiz:
         self.clues = None
         self.ss = None
         self.is_other_os = None # don't know yet
+        self.show_hidden_params = False
+        self.show_hidden_warns = False
         self._reinit()
         
     def _reinit(self):
@@ -229,7 +226,7 @@ class GrubWiz:
                             keys=[ord('E')])
         spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
         spinner.add_key('hide', 'h - toggle hidden param or warning', category='action')
-        spinner.add_key('show_hidden', 's - show hidden params/warnings', vals=[False, True])
+        spinner.add_key('show_hidden', 's - show hidden params/warnings', category='action')
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
@@ -240,7 +237,7 @@ class GrubWiz:
 
         self.win = ConsoleWindow(head_line=True,
                                  keys=spinner.keys, ctrl_c_terminates=False)
-        self.win.opt_return_if_pos_change = True
+        self.win.opts.return_if_pos_change = True
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
         
     def _get_enums_regex(self):
@@ -289,7 +286,7 @@ class GrubWiz:
         # if any param is hidden on this screen, then show
         # a second line
         header = '   [s]HOW:'
-        if not self.spins.show_hidden:
+        if not self.show_hidden_warns:
             header = header.lower()
         if self.hidden_stats.warn:
             header += f' {self.hidden_stats.warn} hidden warnings'
@@ -310,7 +307,8 @@ class GrubWiz:
         reviews = {}
         self.hidden_stats = SimpleNamespace(param=0, warn=0)
         diffs = self.get_diffs()
-        warns = self.wiz_validator.make_warns(self.param_values)
+        warns, all_warn_keys = self.wiz_validator.make_warns(self.param_values)
+        self.hider.purge_orphan_keys(all_warn_keys) # TODO: just run this once?
         if self.must_reviews is None:
             self.must_reviews = list(diffs.keys())
             self.clues = [] # info about the body rows
@@ -359,7 +357,7 @@ class GrubWiz:
                 is_hidden = self.hider.is_hidden_warn(warn_key)
                 self.hidden_stats.warn += int(is_hidden)
 
-                if not is_hidden or self.spins.show_hidden:
+                if not is_hidden or self.show_hidden_warns:
                     mark = '-' if is_hidden else ' '
                     self.win.add_body(f'{mark} {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
                     self.clues.append(Clue('issue', warn_key,
@@ -399,7 +397,7 @@ class GrubWiz:
         # if any param is hidden on this screen, then show
         # a second line
         header = '   [s]HOW:'
-        if not self.spins.show_hidden:
+        if not self.show_hidden_params:
             header = header.lower()
         if self.hidden_stats.param:
             header += f' {self.hidden_stats.param} hidden params'
@@ -481,7 +479,9 @@ class GrubWiz:
         cfg = self.param_cfg[param_name]
         enums = cfg.get('enums', [])
         regex = cfg.get('regex', None)
-        marker = '-' if self.hider.is_hidden_param(param_name) else ' '
+        marker = ' '
+        if self.ss.is_curr(HOME_ST) and self.hider.is_hidden_param(param_name):
+            marker = '-'
         keys = ''
         if enums:
             keys += ' [c]ycle'
@@ -519,7 +519,7 @@ class GrubWiz:
         self.seen_positions = []
         for ns in self.positions:
             self.hidden_stats.param += int(self.hider.is_hidden_param(ns.param_name))
-            if (not ns.param_name or self.spins.show_hidden
+            if (not ns.param_name or self.show_hidden_params
                     or not self.hider.is_hidden_param(ns.param_name)):
                 self.seen_positions.append(ns)
         for pos, ns in enumerate(self.seen_positions):
@@ -826,6 +826,12 @@ class GrubWiz:
                     if name:
                         prev_value = self.prev_values[name]
                         self.param_values[name] = prev_value
+
+                if self.ss.act_in('show_hidden', (REVIEW_ST, HOME_ST)):
+                    if self.ss.is_curr(REVIEW_ST):
+                        self.show_hidden_warns = not self.show_hidden_warns
+                    if self.ss.is_curr(HOME_ST):
+                        self.show_hidden_params = not self.show_hidden_params
 
                 if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
                     if regex:

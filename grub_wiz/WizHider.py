@@ -134,6 +134,12 @@ class WizHider:
         if composite_id in self.warns:
             self.warns.remove(composite_id)
             self.dirty_count += 1
+            
+    def purge_orphan_keys(self, all_warn_keys: set):
+        """ Remove any keys no longer of valid """
+        for key in self.warns:
+            if key not in all_warn_keys:
+                self.warns.discard(key)
 
     def is_hidden_param(self, name: str) -> bool:
         """Checks if a parameter should be hidden."""
