@@ -251,9 +251,10 @@ class GrubWiz:
             if self.seen_positions and 0 <= pos < len(self.seen_positions):
                 param_name = self.seen_positions[pos].param_name
         elif self.ss.is_curr(REVIEW_ST):
-            clue = self.clues[pos]
-            if clue.cat == 'param':
-                param_name = clue.ident
+            if self.clues and 0 <= pos < len(self.clues):
+                clue = self.clues[pos]
+                if clue.cat == 'param':
+                    param_name = clue.ident
         if not param_name:
             return '', {}, {}, ''
 
@@ -283,6 +284,16 @@ class GrubWiz:
         header += ' [w]rite ?:help [q]uit'
         self.win.add_header(header)
         self.hider.write_if_dirty()
+        if self.hidden_stats.warn == 0:
+            return
+        # if any param is hidden on this screen, then show
+        # a second line
+        header = '   [s]HOW:'
+        if not self.spins.show_hidden:
+            header = header.lower()
+        if self.hidden_stats.warn:
+            header += f' {self.hidden_stats.warn} hidden warnings'
+        self.win.add_header(header)
 
     def add_review_body(self):
         """ TBD """
@@ -297,6 +308,7 @@ class GrubWiz:
             return reviews[param_name]
 
         reviews = {}
+        self.hidden_stats = SimpleNamespace(param=0, warn=0)
         diffs = self.get_diffs()
         warns = self.wiz_validator.make_warns(self.param_values)
         if self.must_reviews is None:
@@ -343,9 +355,15 @@ class GrubWiz:
                 self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {ns.old_value}')
                 self.clues.append(Clue('nop'))
             for hey in ns.heys:
-                self.win.add_body(f'  {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
-                self.clues.append(Clue('issue', f'{param_name}.{len(hey[0])}',
-                                       keys=' [h]ide'))
+                warn_key = f'{param_name} {hey[1]}'
+                is_hidden = self.hider.is_hidden_warn(warn_key)
+                self.hidden_stats.warn += int(is_hidden)
+
+                if not is_hidden or self.spins.show_hidden:
+                    mark = '-' if is_hidden else ' '
+                    self.win.add_body(f'{mark} {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
+                    self.clues.append(Clue('issue', warn_key,
+                               keys=' [h]IDE' if is_hidden else' [h]ide'))
 
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -375,17 +393,17 @@ class GrubWiz:
         if chg_cnt:
             header += f'   #chg={chg_cnt}'
         self.win.add_header(header)
+        self.hider.write_if_dirty()
         if self.hidden_stats.param == 0:
             return
         # if any param is hidden on this screen, then show
         # a second line
-        header = '   [s]HOW hidden:'
+        header = '   [s]HOW:'
         if not self.spins.show_hidden:
             header = header.lower()
         if self.hidden_stats.param:
-            header += f' {self.hidden_stats.param} params'
+            header += f' {self.hidden_stats.param} hidden params'
         self.win.add_header(header)
-        self.hider.write_if_dirty()
 
     def adjust_picked_pos(self):
         """ This assumes:
@@ -823,6 +841,16 @@ class GrubWiz:
                             self.hider.unhide_param(name)
                         else:
                             self.hider.hide_param(name)
+                    if self.ss.is_curr(REVIEW_ST):
+                        pos = self.win.pick_pos
+                        if self.clues and 0 <= pos < len(self.clues):
+                            clue = self.clues[pos]
+                            if clue.cat == 'issue':
+                                if self.hider.is_hidden_warn(clue.ident):
+                                    self.hider.unhide_warn(clue.ident)
+                                else:
+                                    self.hider.hide_warn(clue.ident)
+                        
 
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
