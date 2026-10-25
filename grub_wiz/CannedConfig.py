@@ -20,6 +20,10 @@ class CannedConfig:
         'enums': {},  # key: enum name, value enum description
         'guidance': '',  # often lengthy, may have embedded newlines
     }
+    # Fields a user must supply in custom_config.yaml.  'edit_re_human' is
+    # intentionally excluded: it is derived from '_re_specs_' by
+    # _process_config() at runtime and is not present in the packaged YAML.
+    required_cfg_keys = frozenset({'default', 'edit_re', 'enums', 'guidance'})
     def OLD__init__(self):
         # 1. Get a Traversable object for the 'grub_wiz' package directory
         resource_path = files('grub_wiz') / 'canned_config.yaml'
@@ -136,23 +140,39 @@ class CannedConfig:
                 # dynamic to show the current value marker in the UI
 
     def validate_schema(self, data):
-        """Validate custom config has correct structure"""
+        """Validate custom config structure.
+
+        Returns None when valid, otherwise a human-readable error string.
+
+        Top-level sections whose names start with '_' are reserved metadata
+        (_distro_vars_, _re_specs_, _update_initramfs_triggers_, ...).  They
+        are not GRUB parameters, so they are exempt from the GRUB_* naming
+        and per-parameter schema checks while still requiring a mapping value.
+        """
         if not isinstance(data, dict):
-            return False
-        keys_set = set(self.default_cfg.keys())
-        
+            return 'Config root is not a mapping'
+
+        allowed_keys = set(self.default_cfg.keys())
+
         for section_name, params in data.items():
             if not isinstance(params, dict):
                 return f'Section ({section_name!r} value not dict)'
+            # Reserved metadata sections (e.g. _distro_vars_, _re_specs_)
+            if isinstance(section_name, str) and section_name.startswith('_'):
+                continue
             for param_name, cfg in params.items():
-                if not param_name.startswith('GRUB_'):
+                if not isinstance(param_name, str) or not param_name.startswith('GRUB_'):
                     return f'Param ({param_name!r} is not GRUB_*)'
-                # Check required fields exist
-                if not all(k in cfg for k in keys_set):
-                    return f'Param ({param_name!r} dict missing keys'
+                if not isinstance(cfg, dict):
+                    return f'Param ({param_name!r} value not dict)'
+                # Check required fields exist (edit_re_human is runtime-only)
+                missing = self.required_cfg_keys - set(cfg)
+                if missing:
+                    return f'Param ({param_name!r} dict missing keys: {sorted(missing)}'
                 # Check no extra fields (strict)
-                if set(cfg.keys()) - keys_set:
-                    return f'Param ({param_name!r} dict extra keys'
+                extra = set(cfg.keys()) - allowed_keys
+                if extra:
+                    return f'Param ({param_name!r} dict extra keys: {sorted(extra)}'
         return None
 
     def dump(self):

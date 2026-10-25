@@ -157,19 +157,21 @@ This matters in production because [`reinit_gw()`](../grub_wiz/main.py:1019) pas
 
 **Remediation:** [`getvals()`](../grub_wiz/WizValidator.py:263) now returns each requested `(name, value)` pair independently, so one absent key no longer discards the values of the keys that are present. [`sh()`](../grub_wiz/WizValidator.py:251) tolerates a missing name and accepts a fallback, so message construction can no longer raise. Rules that warn about a companion parameter now require that companion to be in the active set, which also avoids filing warnings under a `None` key ([`WizValidator.py:369`](../grub_wiz/WizValidator.py:369), [`WizValidator.py:405`](../grub_wiz/WizValidator.py:405)); the enum loop resets `bad` per parameter instead of reusing the previous rule's value ([`WizValidator.py:467`](../grub_wiz/WizValidator.py:467)). Regression coverage in [`tests/test_validator_rules.py`](test_validator_rules.py:802) includes the exact `{'GRUB_DEFAULT': {}}` reproduction plus serial, gfxterm, SAVEDEFAULT/DEFAULT, and splash/CMDLINE cases; `pytest -q` passes (50 tests).
 
-### H4. The documented custom-config workflow is unusable
+### H4. The documented custom-config workflow is unusable — ✅ FIXED
 
-[`README.md:232`](../README.md:232) tells users to copy the packaged `canned_config.yaml` to `custom_config.yaml`. [`validate_schema()`](../grub_wiz/CannedConfig.py:127) then rejects it:
+[`README.md:232`](../README.md:232) tells users to copy the packaged `canned_config.yaml` to `custom_config.yaml`. [`validate_schema()`](../grub_wiz/CannedConfig.py:142) then rejected it:
 
-- It requires `edit_re_human` on every parameter ([`CannedConfig.py:140`](../grub_wiz/CannedConfig.py:140)), but that field is only injected at runtime and is not present in the YAML ([`canned_config.yaml:137`](../grub_wiz/canned_config.yaml:137) and throughout).
-- It rejects top-level underscore sections: `_distro_vars_` and `_re_specs_` fail the `GRUB_*` parameter-name check at [`CannedConfig.py:137`](../grub_wiz/CannedConfig.py:137).
+- It required `edit_re_human` on every parameter, but that field is only injected at runtime and is not present in the YAML ([`canned_config.yaml:137`](../grub_wiz/canned_config.yaml:137) and throughout).
+- It rejected top-level underscore sections: `_distro_vars_` and `_re_specs_` failed the `GRUB_*` parameter-name check.
 
 Reproduced:
 
 - Packaged config → `"Param ('grub_cfg' is not GRUB_*)"`.
 - Config with underscore sections removed → `"Param ('GRUB_TIMEOUT' dict missing keys"`.
 
-Removing `_distro_vars_` would also make [`DistroVars`](../grub_wiz/DistroVars.py:46) unable to find `/etc/default/grub` and exit at [`DistroVars.py:117`](../grub_wiz/DistroVars.py:117). So no custom config can be both accepted and functional. The README’s promise of schema validation/fallback is technically true, but the fallback is always taken for the documented workflow.
+Removing `_distro_vars_` would also make [`DistroVars`](../grub_wiz/DistroVars.py:46) unable to find `/etc/default/grub` and exit at [`DistroVars.py:117`](../grub_wiz/DistroVars.py:117). So no custom config could be both accepted and functional. The README’s promise of schema validation/fallback was technically true, but the fallback was always taken for the documented workflow.
+
+**Remediation:** [`validate_schema()`](../grub_wiz/CannedConfig.py:142) now skips top-level sections whose names start with `_` (after still requiring a mapping value), so [`_distro_vars_`](../grub_wiz/canned_config.yaml:1), [`_re_specs_`](../grub_wiz/canned_config.yaml:79), and [`_update_initramfs_triggers_`](../grub_wiz/canned_config.yaml:22) are accepted and remain available to [`DistroVars`](../grub_wiz/DistroVars.py:46) and [`_process_config()`](../grub_wiz/CannedConfig.py:77). Required per-parameter fields are now declared as [`required_cfg_keys`](../grub_wiz/CannedConfig.py:26) (`default`, `edit_re`, `enums`, `guidance`), excluding the runtime-derived `edit_re_human`; it is still accepted as an allowed key. A non-dict root now returns an error string instead of `False`. The README notes the reserved sections and required fields, and regression coverage in [`tests/test_canned_config.py`](test_canned_config.py) verifies that the packaged template validates, that an exact copy is loaded as the active custom config with regexes resolved and metadata intact, and that malformed configs still fall back with a warning (`pytest -q` passes, 64 tests).
 
 ### H5. Compare screen crashes on unvalidated parameters
 
@@ -387,4 +389,5 @@ The tests pass (`20 passed`) but:
 - CLI probe (H1): `main()` replayed with `GrubWiz` and `rerun_module_as_root` stubbed; `--discovery=enable`, `--discovery=disable`, and `--discovery=show` all exit 0 with the expected `manual_enable()` argument.
 - Disk-layout probe (H2): the host previously probed as `has_another_os=False, is_luks_active=False, is_lvm_active=False`; it now reports `has_another_os=True, is_luks_active=True, is_lvm_active=False`, matching its `crypto_LUKS` partitions, Microsoft basic-data partition, and separate Kubuntu/Debian boot entries. [`tests/test_disk_layout.py`](test_disk_layout.py) feeds canned `lsblk`/`efibootmgr` output so the results do not depend on the host.
 - `pytest -q` — 49 passed.
+- Custom-config probe (H4): the packaged `canned_config.yaml` now passes `validate_schema()` unchanged, and an exact copy in a temporary user-config directory is selected as `using_path` with `edit_re` resolved against `_re_specs_` and `_distro_vars_` intact. [`tests/test_canned_config.py`](test_canned_config.py) also covers reserved metadata sections, runtime-only `edit_re_human`, malformed sections, and fallback to the packaged template. `pytest -q` — 64 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.

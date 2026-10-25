@@ -269,6 +269,8 @@ For advanced users who need to modify parameter definitions:
 **Notes:**
 - Invalid YAML or schema errors fall back to packaged config with a warning
 - Use `grub-wiz --validate-custom-config` to test your changes
+- Top-level sections beginning with `_` (`_distro_vars_`, `_re_specs_`, `_update_initramfs_triggers_`) are reserved metadata. Keep them when copying the template: `_distro_vars_` tells `grub-wiz` where to find `/etc/default/grub` and the update commands.
+- Each `GRUB_*` entry requires `default`, `edit_re`, `enums`, and `guidance`. `edit_re_human` is generated at runtime from `_re_specs_`; do not add it.
 - Consider submitting useful additions as GitHub issues/PRs!
 
 ---
