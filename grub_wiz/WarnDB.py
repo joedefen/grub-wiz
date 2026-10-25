@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""
-TBD
+"""Persistent warning severities and suppressed-warning state.
+
+``all_warnings`` records every warning key with its severity (1-4), while
+``inhibited`` records the keys the user asked to hide.  Both are reconciled
+against the live validator output so edits, orphaned inhibits, and grading
+changes survive a restart without the database going stale.
 """
 # pylint: disable=too-many-instance-attributes
 

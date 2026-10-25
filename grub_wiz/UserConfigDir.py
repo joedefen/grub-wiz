@@ -178,7 +178,7 @@ class UserConfigDir:
             os.chmod(path, mode)
             if os.geteuid() == 0:
                 os.chown(path, uid, gid)
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             if not quiet:
                 print(f"Error: Could not prepare {label} directory {path}: {e}",
                       file=sys.stderr)
@@ -197,7 +197,7 @@ class UserConfigDir:
                              label="system state", must_be_root_owned=True,
                              quiet=(os.geteuid() != 0))
             return preferred
-        except Exception:
+        except (OSError, RuntimeError):
             if os.geteuid() == 0:
                 # Running as root: failing here is a real error, not a sandbox.
                 raise
@@ -277,7 +277,7 @@ class UserConfigDir:
                 os.fsync(dir_fd)
             except OSError:
                 pass
-        except Exception:
+        except (OSError, ValueError):
             if tmp_fd is not None:
                 try:
                     os.close(tmp_fd)
@@ -372,7 +372,7 @@ class UserConfigDir:
             os.fchmod(fd, mode)
             if os.geteuid() == 0:
                 os.fchown(fd, self.uid, self.gid)
-        except Exception as e:
+        except OSError as e:
             print(f"Warning: Could not set ownership/permissions on {filepath}: {e}",
                   file=sys.stderr)
         finally:

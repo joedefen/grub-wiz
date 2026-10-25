@@ -20,7 +20,7 @@ GrubFile:
         - the "guidance" lines commented out
         - param=value
 """
-# pylint: disable=line-too-long,broad-exception-caught
+# pylint: disable=line-too-long
 # pylint: disable=too-many-branches
 import sys
 import re
@@ -33,7 +33,7 @@ try:
     from .DistroVars import DEFAULT_ETC_GRUB
     from .ParamDiscovery import ParamDiscovery
     from .UserConfigDir import UserConfigDir
-except Exception:
+except ImportError:
     from CannedConfig import CannedConfig
     from DistroVars import DEFAULT_ETC_GRUB
     from ParamDiscovery import ParamDiscovery
@@ -490,7 +490,7 @@ class GrubFile:
                     Path(output_path), text, mode=0o644)
                 print(f"OK: wrote '{output_path}'")
             return True
-        except Exception as wr_ex:
+        except (OSError, ValueError) as wr_ex:
             print(f"ERR: cannot write '{output_path}' [{wr_ex}]")
             return False
 

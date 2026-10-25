@@ -1,10 +1,15 @@
 #!/usr/bin/env
-"""
+"""Load, validate, and post-process the packaged or user-supplied config.
+
+The packaged ``canned_config.yaml`` is the schema of parameters, enums, and
+guidance.  A ``custom_config.yaml`` in the user state directory replaces it
+when it passes :meth:`CannedConfig.validate_schema`; otherwise the packaged
+template remains active and the reason is reported.
 """
 import io
 import re
 from importlib.resources import files
-from ruamel.yaml import YAML
+from ruamel.yaml import YAML, YAMLError
 from .UserConfigDir import UserConfigDir
 
 yaml = YAML()
@@ -36,7 +41,7 @@ def has_edit_regex(edit_re):
 
 
 class CannedConfig:
-    """ TBD"""
+    """The active parameter configuration and its runtime metadata."""
     default_cfg = {  # config schema for a single parameter
         'default': '',  # usually string, can be integer
         'edit_re': EXPERT_EDIT,
@@ -95,7 +100,7 @@ class CannedConfig:
                     self.using_path = custom_path
                 else:
                     print(f"WARNING: {custom_path} invalid ({err}), using canned config")
-            except Exception as e:
+            except YAMLError as e:
                 print(f"WARNING: Cannot yaml.load {custom_path}: {e}")
 
     def _process_config(self):
@@ -224,7 +229,7 @@ class CannedConfig:
         print(stream.getvalue())
 
 def main():
-    """ TBD """
+    """Load the active configuration and print it as YAML."""
     cfg = CannedConfig()
     cfg.dump()
 

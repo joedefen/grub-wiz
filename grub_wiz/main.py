@@ -51,7 +51,7 @@ TAKEN_NAV_KEYS = {
 
 
 class Tab:
-    """ TBD """
+    """Column layout for the body: parameter name left, value right."""
     def __init__(self, cols, param_wid):
         """           g
         >----left----|a |---right ---|
@@ -133,7 +133,7 @@ class GrubWizScreen(Screen):
         self.gw = self.app  # Backward compatibility: gw is an alias for app
 
     def slash_PROMPT(self, current: str):
-        """ TBD """
+        """Prompt for a Python regex used to filter the current screen."""
         hint = 'must be a valid python regex'
         regex = None # compiled
         pattern = current
@@ -150,7 +150,7 @@ class GrubWizScreen(Screen):
             try:
                 regex = re.compile(pattern, re.IGNORECASE)
                 return pattern, regex
-            except Exception as whynot:
+            except re.error as whynot:
                 hint = str(whynot)
                 continue
 
@@ -184,7 +184,7 @@ class HomeScreen(GrubWizScreen):
         self.regex = None
 
     def draw_screen(self):
-        """ TBD """
+        """Draw the editable parameter list and its header."""
         self.win.set_pick_mode(True)
         self.draw_body()
         self.draw_head()
@@ -224,7 +224,7 @@ class HomeScreen(GrubWizScreen):
 
 
     def draw_body(self):
-        """ TBD """
+        """Build the scrollable body of parameter sections and values."""
         gw = self.gw
         gw.hidden_stats = SimpleNamespace(param=0, warn=0)
         win = self.win # short hand
@@ -298,7 +298,7 @@ class HomeScreen(GrubWizScreen):
         return found_current
 
     def add_common_head1(self, title):
-        """ TBD"""
+        """Add the first header line shared by the HOME and REVIEW screens."""
         gw = self.gw
         header = f'{title} '
         level = gw.spins.guide
@@ -315,7 +315,7 @@ class HomeScreen(GrubWizScreen):
         gw.warn_db.write_if_dirty()
 
     def add_common_head2(self, left):
-        """ TBD"""
+        """Add the second header line with per-selection actions and search."""
         gw = self.gw
         param_name, _, enums, regex, value = gw.get_enums_regex()
         review_screen = gw.ss.is_curr(REVIEW_ST)
@@ -453,7 +453,7 @@ class ReviewScreen(HomeScreen):
         return True
 
     def draw_screen(self):
-        """ TBD """
+        """Draw the review list of changes and warnings."""
         self.win.set_pick_mode(True)
         self.add_body()
         self.add_head()
@@ -475,7 +475,7 @@ class ReviewScreen(HomeScreen):
         # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
     def add_body(self):
-        """ TBD """
+        """Build the review list, grouping changed values with their warnings."""
         def add_review_item(param_name, value, old_value=None, heys=None):
             nonlocal reviews
             if param_name not in reviews:
@@ -602,7 +602,7 @@ class ReviewScreen(HomeScreen):
         self.gw.update_grub()
 
     def slash_ACTION(self):
-        """ TBD"""
+        """Search is not available on REVIEW; '/' is a no-op."""
         return # does nothing here
 
 
@@ -631,7 +631,7 @@ class RestoreScreen(GrubWizScreen):
         self.add_head()
 
     def add_head(self):
-        """ TBD """
+        """Add the RESTORE header with the available selection actions."""
         gw = self.gw
         pos, base = self.win.pick_pos, '[c]mp [b]aseline'
         if 0 <= pos < len(self.bak_paths):
@@ -654,7 +654,7 @@ class RestoreScreen(GrubWizScreen):
         self.baseline_bak = new_ref
 
     def add_body(self):
-        """ TBD """
+        """List every backup, marking the current file and the CMP baseline."""
         gw = self.gw
         if not gw.ordered_backup_pairs:
             return
@@ -738,7 +738,7 @@ class RestoreScreen(GrubWizScreen):
             if gw.really_wanna(f'remove {doomed.name!r}'):
                 try:
                     os.unlink(doomed)
-                except Exception as exce:
+                except OSError as exce:
                     self.win.alert(
                         message=f'ERR: unlink({doomed}) [{exce}]')
                 gw.refresh_backup_list()
@@ -763,7 +763,7 @@ class RestoreScreen(GrubWizScreen):
                 elif new_path != chosen:
                     try:
                         os.rename(chosen, new_path)
-                    except Exception as exce:
+                    except OSError as exce:
                         self.win.alert(
                             message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]')
                 gw.refresh_backup_list()
@@ -778,7 +778,7 @@ class RestoreScreen(GrubWizScreen):
                 gw.bak_lines = gw.bak_path.read_text().splitlines()
                 assert isinstance(gw.bak_lines, list)
                 gw.navigate_to(VIEW_ST)
-            except Exception as ex:
+            except (OSError, UnicodeDecodeError) as ex:
                 self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
 class CompareScreen(GrubWizScreen):
@@ -800,13 +800,13 @@ class CompareScreen(GrubWizScreen):
         return True
 
     def draw_screen(self):
-        """ TBD """
+        """Draw the side-by-side comparison and its header."""
         self.win.set_pick_mode(False)
         self.add_body()
         self.add_head()
 
     def add_body(self):
-        """ TBD """
+        """Render (and cache) the diff between the two selected backups."""
         def get_val(param, data):
             # param_data holds SimpleNamespace records; a parameter that only
             # exists in the other file is simply absent here.
@@ -883,7 +883,7 @@ class CompareScreen(GrubWizScreen):
                 self.win.add_body(line)
 
     def add_head(self):
-        """ TBD """
+        """Add the COMPARE header naming both backups and their line counts."""
         win = self.win
         win.add_header('COMPARE   ESC:back')
         win.add_header(f'< {self.bak1.name} [#lines={self.cnt1}]')
@@ -902,19 +902,19 @@ class ViewScreen(GrubWizScreen):
         return True
 
     def draw_screen(self):
-        """ TBD """
+        """Draw the selected backup's contents and its header."""
         self.win.set_pick_mode(False)
         self.add_body()
         self.add_head()
 
     def add_head(self):
-        """ TBD """
+        """Add the VIEW header naming the displayed backup."""
         gw = self.gw
         header = f'VIEW  {gw.bak_path.name!r}  ESC:back ?:help [q]uit'
         gw.add_fancy_header(header)
 
     def add_body(self):
-        """ TBD """
+        """Render the selected backup with line numbers and wrapping."""
         gw = self.gw
         wid = self.win.cols - 7 # 4 num + SP before + 2SP after
         indent = ' ' * 6 # align wrapped text past the 4-digit index column
@@ -944,13 +944,13 @@ class WarnScreen(GrubWizScreen):
         return True
 
     def draw_screen(self):
-        """ TBD """
+        """Draw the warnings-configuration body and header."""
         self.win.set_pick_mode(True)
         self.draw_body()
         self.draw_head()
 
     def draw_head(self):
-        """ TBD """
+        """Add the WARNINGS-CONFIG header with the inhibit action and search."""
         gw = self.gw
         db = gw.warn_db
         ctx = self.win.get_picked_context()
@@ -984,7 +984,7 @@ class WarnScreen(GrubWizScreen):
         gw.warn_db.audit_info(all_warn_info)
 
     def draw_body(self):
-        """ TBD """
+        """List every known warning, filtered by the search regex."""
         gw = self.gw
         self.refresh_warn_info()
         db = gw.warn_db
@@ -1026,7 +1026,7 @@ class WarnScreen(GrubWizScreen):
                 prev_param = param_name
 
     def hide_ACTION(self):
-        """ TBD """
+        """Toggle suppression of the selected warning."""
         gw = self.gw
         ctx = self.win.get_picked_context()
         if ctx and ctx.genre == 'warn':
@@ -1044,7 +1044,7 @@ class WarnScreen(GrubWizScreen):
 class HelpScreen(GrubWizScreen):
     """HELP screen"""
     def draw_screen(self):
-        """ TBD """
+        """Draw navigation-key and body help for the current screen."""
         gw, win = self.gw, self.win
         self.win.set_pick_mode(False)
         gw.spinner.show_help_nav_keys(win)
@@ -1188,7 +1188,7 @@ def prompt_line(prompt: str, default: str = '') -> str:
 
 
 class GrubWiz:
-    """ TBD """
+    """Application state and behaviour for the grub-wiz TUI."""
     singleton = None
 
     # parameters to give more answer space to
@@ -1338,7 +1338,9 @@ class GrubWiz:
         try:
             self.param_cfg['GRUB_DEFAULT']['enums'].update(
                 entries_to_enums(self.menu_entries))
-        except Exception:
+        except (KeyError, AttributeError, TypeError):
+            # GRUB_DEFAULT is filtered out or has no enum mapping; menu
+            # entries are then simply not offered as choices.
             pass
         self.warn_db = WarnDB(param_cfg=self.param_cfg)
 
@@ -1350,7 +1352,7 @@ class GrubWiz:
         self.refresh_backup_list()
 
     def setup_win(self):
-        """TBD """
+        """Create the console window, screens, key bindings, and search bars."""
         # LEFT/RIGHT drive cycle_prev/cycle_next on this app, so this window
         # asks console-window to hand those codes over instead of mutating the
         # library's global NAVIGATION_KEYS.  ``taken_nav_keys`` removes them
@@ -1545,7 +1547,7 @@ class GrubWiz:
         self.win.set_handled_keys(self.spinner)
 
     def get_enums_regex(self):
-        """ TBD"""
+        """Return the selected parameter's name, config, enums, regex, and value."""
         enums, regex, param_name, value = None, None, None, None
         if self.ss.is_curr((REVIEW_ST, HOME_ST)):
             # Get context for the current line
@@ -1563,11 +1565,14 @@ class GrubWiz:
 
 
     def truncate_line(self, line):
-        """ TBD """
+        """Truncate *line* to the window width using cell-aware widths."""
         return truncate_to_width(line, self.win.cols-1)
 
     def add_wrapped_body_line(self, line, indent, is_current, context=None):
-        """ TBD """
+        """Add a body line, wrapping it when it is the selected row.
+
+        Returns the number of screen lines added.
+        """
         if not is_current:
             self.win.add_body(self.truncate_line(line), context=context)
             return 1
@@ -1588,7 +1593,7 @@ class GrubWiz:
         return len(wraps) # lines added
 
     def is_warn_hidden(self, param_name, hey):
-        """ TBD """
+        """True when the warning is inhibited and hidden warnings are off."""
         if not self.show_hidden_warns:
             warn_key = f'{param_name} {hey[1]}'
             return self.warn_db.is_inhibit(warn_key)
@@ -1651,7 +1656,11 @@ class GrubWiz:
         return default
 
     def activate_param(self, param_name):
-        """ TBD """
+        """Give a commented or absent parameter a writable value.
+
+        Returns ``True`` when a value was restored or defaulted, ``False``
+        when the parameter was already active.
+        """
         value = self.param_values.get(param_name, None)
         if value in (GrubFile.COMMENT, GrubFile.ABSENT):
             value = self.saved_active_param_values.get(param_name, None)
@@ -1679,7 +1688,7 @@ class GrubWiz:
 
 
     def drop_down_lines(self, param_name):
-        """ TBD """
+        """Build the guidance and enum lines shown under the selected parameter."""
         def gen_enum_lines():
             nonlocal cfg, wid
             enums = cfg['enums']
@@ -1906,7 +1915,7 @@ class GrubWiz:
         return answer.strip().lower() == 'yes'
 
     def update_grub(self):
-        """ TBD """
+        """Commit staged changes, update GRUB, and offer reboot/poweroff."""
         if not self.really_wanna('commit changes and update GRUB'):
             return
 
@@ -2105,7 +2114,7 @@ class GrubWiz:
         return False
 
     def main_loop(self):
-        """ TBD """
+        """Run the draw/prompt/dispatch loop until the user quits."""
         self.setup_win()
         self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
@@ -2167,7 +2176,7 @@ def rerun_module_as_root(module_name):
 
 
 def main():
-    """ TBD """
+    """Parse CLI options and start the TUI or the requested diagnostic mode."""
     rerun_module_as_root('grub_wiz.main')
     parser = ArgumentParser(description='grub-wiz: your grub-update guide')
     parser.add_argument('--discovery', '--parameter-discovery', default=None,
@@ -2221,7 +2230,7 @@ def main():
             else:
                 print('No cached files to delete.')
             print('Factory reset complete. Backup files (.bak) preserved.')
-        except Exception as whynot:
+        except OSError as whynot:
             print(f'ERR: failed "factory reset" [{whynot}]')
         sys.exit(0)
 
@@ -2234,7 +2243,7 @@ def _restore_terminal():
     if win is not None:
         try:
             win.stop_curses()
-        except Exception:
+        except (cs.error, OSError, RuntimeError, AttributeError):
             # Never mask the original failure while cleaning up.
             pass
 

@@ -7,7 +7,6 @@ The result depends on the machine (installed GRUB docs, distro), not on the
 invoking user, so the cache lives in the root-owned system state directory
 (/var/lib/grub-wiz/system-params.yaml) rather than in a user's home.
 """
-# pylint: disable=broad-exception-caught,
 
 import io
 import re
@@ -15,11 +14,11 @@ import argparse
 import subprocess
 import time
 from typing import Optional, Set
-from ruamel.yaml import YAML
+from ruamel.yaml import YAML, YAMLError
 
 try:
     from .UserConfigDir import UserConfigDir
-except Exception:
+except ImportError:
     from UserConfigDir import UserConfigDir
 
 yaml = YAML()
@@ -155,7 +154,7 @@ class ParamDiscovery:
         except FileNotFoundError:
             print("Warning: 'info' command not found on system")
             return params, STATE_NO_INFO
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             print(f"Warning: Unexpected error during parameter discovery: {e}")
             return params, STATE_CANNOT_PARSE
 
@@ -246,7 +245,7 @@ class ParamDiscovery:
                 'manual_disabled': manual_disabled
             }
             return self.cached_data
-        except Exception as e:
+        except (YAMLError, AttributeError, TypeError, ValueError) as e:
             print(f"Warning: Failed to load cache file: {e}")
             return None
 

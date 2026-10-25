@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-""" TBD """
+"""Validation rules and machine probes for ``/etc/default/grub`` parameters.
+
+The validator combines the parameter values with facts about the machine
+(disk layout, LUKS/LVM, multiboot, initramfs tool) to produce warnings with
+severities.  Disk-layout results are cached per instance because they depend
+on the host rather than on the configuration being edited.
+"""
 
 import os
 import re
@@ -16,7 +22,7 @@ from .WarnDB import WarnDB
 
 
 class WizValidator:
-    """ TBD """
+    """Compute warnings for a parameter set and probe machine-wide facts."""
 
     # GPT partition-type GUIDs (lowercase) used by the disk-layout heuristics.
     GPT_WINDOWS_RECOVERY = 'de94bba4-06d9-4d40-a16a-bfd50179d6ac'

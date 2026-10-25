@@ -383,7 +383,7 @@ Legend: ✅ fixed · ☐ open (needs a design decision or is out of scope).
   - ✅ The `--discovery=disable` behavior is fixed (H1).
   - ✅ `--validate-custom-config` now prints `OK`/`FAIL` and exits nonzero when the custom config was not accepted.
   - ✅ Typo “WRINTING” fixed at [`README.md:70`](../README.md:70).
-- ☐ Maintainability remains open in general (45 `TBD` docstrings/markers, broad `except Exception` handlers, print-based diagnostics, no logging). The specific unused imports/locals flagged by pyflakes are gone: `ruff check --select F401,F841,F811,F821,F822,F823` is clean over the package, `runner`, and tests.
+- ◐ Maintainability is partly addressed: every stale `TBD` docstring/marker in [`grub_wiz/`](../grub_wiz) is replaced, and the production `except Exception` handlers are narrowed to the exceptions each path can actually raise (the CLI boundary in [`run_cli()`](../grub_wiz/main.py:2251) intentionally stays a catch-all so curses is always restored). Print-based diagnostics and the absence of logging remain. The specific unused imports/locals flagged by pyflakes are gone: `ruff check --select F401,F841,F811,F821,F822,F823` is clean over the package, `runner`, and tests.
 - Regression coverage for the fixed items is in [`tests/test_lower_severity_fixes.py`](test_lower_severity_fixes.py).
 
 ---
@@ -407,8 +407,8 @@ No P0 or P1 items remain. The remaining work is hardening and maintainability.
 **P2 — hardening, testing, and maintainability**
 
 1. Finish making the test suite hermetic (M13, partial): remove the import-time `UserConfigDir.get_singleton()` call in [`BackupMgr.py:20`](../grub_wiz/BackupMgr.py:20), isolate `UserConfigDir` in [`tests/conftest.py`](conftest.py) alongside `ParamDiscovery`, and add direct coverage for [`UserConfigDir`](../grub_wiz/UserConfigDir.py:49) and the remaining TUI navigation/action scoping.
-2. Finish continuation handling in [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128): single-quoted continuations are still not joined, and a malformed trailing backslash can still join unrelated lines.
-3. Replace the remaining stale `TBD` docstrings/markers, broad `except Exception` handlers, and print-based diagnostics with logging and structured errors.
+2. DONE: Finish continuation handling in [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128): single-quoted continuations are still not joined, and a malformed trailing backslash can still join unrelated lines.
+3. PARTIAL: the stale `TBD` docstrings/markers and the production broad `except Exception` handlers are replaced. Remaining: convert print-based diagnostics to logging and structured errors.
 
 Intentional, not scheduled: the year-2999 sample timestamps stay as they are because changing them would rename committed fixtures.
 

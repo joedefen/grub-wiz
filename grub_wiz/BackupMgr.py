@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-""" TBD"""
-# pylint: disable=line-too-long,invalid-name,broad-exception-caught
+"""Create, list, restore, and delete backups of ``/etc/default/grub``.
+
+Backups are owned by the invoking user and live in the user state
+directory.  Files read from that directory are treated as untrusted input;
+writes to the root-owned target go through the symlink-safe atomic helpers
+in :mod:`grub_wiz.UserConfigDir`.
+"""
+# pylint: disable=line-too-long,invalid-name
 import os
 import sys
 import hashlib
@@ -41,11 +47,12 @@ class BackupMgr:
         self.user_config = user_config if user_config else USER_CONFIG
         self.config_dir = self.user_config.user_state_dir
 
-    # --- calc_checksum, get_backups, and restore_backup remain the same ---
-    # (Leaving these out for brevity in the response, but they are included in the full file block)
-
     def calc_checksum(self, source: Union[Path, str]) -> str:
-        """ TBD """
+        """Return the first 8 hex digits of the SHA-256 of a file or string.
+
+        A missing or unreadable file yields ``''`` so callers can treat the
+        checksum as "unknown" instead of raising during a backup listing.
+        """
         content = b''
 
         if isinstance(source, Path):
@@ -53,8 +60,7 @@ class BackupMgr:
                 return ""
             try:
                 content = source.read_bytes()
-            except Exception:
-                # print(f"Error reading file {source} for checksum: {e}", file=sys.stderr)
+            except OSError:
                 return ""
         elif isinstance(source, str):
             content = source.encode('utf-8')
@@ -106,7 +112,12 @@ class BackupMgr:
         return None
 
     def restore_backup(self, backup_file: Path, dest_path: Optional[Path] = None) -> bool:
-        """ TBD """
+        """Restore *backup_file* over *dest_path* (default: the target path).
+
+        Returns ``True`` only after the destination was atomically replaced.
+        The backup is untrusted user-owned input, so symlinks, NUL bytes, and
+        command substitution are rejected before any privileged write.
+        """
         destination = dest_path if dest_path is not None else self.target_path
 
         if os.geteuid() != 0:
@@ -133,7 +144,7 @@ class BackupMgr:
             self.user_config.atomic_root_write(destination, data, mode=0o644)
             print(f"Success: Restored {backup_file.name} to {destination}")
             return True
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"Error restoring backup {backup_file} to {destination}: {e}", file=sys.stderr)
             return False
     # -----------------------------------------------------------------------
@@ -171,6 +182,6 @@ class BackupMgr:
 
             print(f"Success: Created new backup: {new_backup_path.name}")
             return new_backup_path
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"Error creating backup file {new_filename}: {e}", file=sys.stderr)
             return None

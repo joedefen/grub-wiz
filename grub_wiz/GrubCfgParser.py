@@ -61,7 +61,7 @@ def get_top_level_grub_entries(grub_cfg, only_very_top=False) -> List[Dict[str, 
     try:
         with open(grub_cfg, 'r', encoding='utf-8') as f:
             content = f.read()
-    except Exception as e:
+    except (OSError, UnicodeDecodeError) as e:
         print(f"ERROR: cannot read {grub_cfg}: {e}", file=sys.stderr)
         return []
 

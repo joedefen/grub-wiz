@@ -2,7 +2,7 @@
 """
 Handles updating /etc/default/grub and running grub-install
 """
-# pylint: disable=line-too-long,invalid-name,broad-exception-caught
+# pylint: disable=line-too-long,invalid-name
 
 import os
 import sys
@@ -83,7 +83,7 @@ class GrubWriter:
             print("OK: GRUB config rebuilt")
             return True, 'OK'
 
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             return False, f"An unexpected error occurred during GRUB update execution: {e}"
 
     def should_rebuild_initramfs(self, diffs: dict) -> Tuple[bool, str, str]:
@@ -232,7 +232,7 @@ class GrubWriter:
                 'message': message,
             }
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             # If we can't check space, return safe defaults (assume it's risky)
             return {
                 'boot_path': str(boot_path),
@@ -297,7 +297,7 @@ class GrubWriter:
             print("OK: Initramfs rebuilt")
             return True, 'OK'
 
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             return False, f"Unexpected error during initramfs rebuild: {e}"
 
     def _validate_candidate(self, temp_path: Path, data: bytes) -> Tuple[bool, str]:
@@ -404,7 +404,7 @@ class GrubWriter:
                 rollback = self.user_config.system_state_dir / 'last-known-good.grub'
                 try:
                     self.user_config.atomic_root_write(rollback, previous, mode=0o600)
-                except Exception as e:
+                except OSError as e:
                     print(f"Warning: could not write rollback copy: {e}", file=sys.stderr)
 
             # --- Step 4: Atomic install ---
@@ -422,13 +422,13 @@ class GrubWriter:
         except PermissionError:
             return False, f"Permission Error: Cannot write to {self.etc_grub} or execute GRUB utilities."
 
-        except Exception as e:
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
             # Best-effort rollback: never leave a partially written target.
             if have_previous:
                 try:
                     self.user_config.atomic_root_write(self.etc_grub, previous, mode=0o644)
                     return False, (f"Commit failed ({e}); previous {self.etc_grub} restored.")
-                except Exception as restore_exc:
+                except (OSError, ValueError) as restore_exc:
                     msg = (f"CRITICAL: commit failed ({e}) and restoring the previous "
                            f"{self.etc_grub!r} also failed ({restore_exc}). "
                            f"A rollback copy should be in {self.user_config.system_state_dir}.")
@@ -441,7 +441,7 @@ class GrubWriter:
             if temp_path and os.path.lexists(temp_path):
                 try:
                     os.unlink(temp_path)
-                except Exception as e:
+                except OSError as e:
                     print(f"Warning: Failed to rm temp file {temp_path}: {e}",
                           file=sys.stderr)
 
@@ -469,7 +469,7 @@ class GrubWriter:
                 return True, f"OK: restored the previous {target!r}"
             os.unlink(target)
             return True, f"OK: removed {target!r} (it did not exist before the commit)"
-        except Exception as e:
+        except OSError as e:
             return False, f"ERROR: could not restore {target!r}: {e}"
 
     def commit_and_update(self, temp_path: Path,
