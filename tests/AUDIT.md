@@ -38,7 +38,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | H9 | ✅ | The editor now validates a whole-value shell grammar that allows plain GRUB values (`, = + : /`, etc.) and rejects splitting/expansion unless the parameter's `_re_specs_` entry opts into command substitution. Shipped enums/regexes were reconciled. |
 | M1–M3 | ✅ | Quoting rules now detect an unquoted value directly instead of testing membership in `quotes(unquote(v))`; the missing/empty `GRUB_DISTRIBUTOR` rule no longer requires `exist()`, so ABSENT/COMMENT/empty values warn; the enum loop resets `bad` per parameter and has a regression test; `EXPERT_EDIT` is a string and the UI uses `has_edit_regex()` instead of truthiness. |
 | M4 | ✅ | [`get_top_level_grub_entries()`](../grub_wiz/GrubCfgParser.py:42) now returns the documented `List[Dict[str, str]]`, matches both `menuentry` and `submenu` via `ENTRY_KEYWORDS`, dedupes titles, and the `__main__` block requires a `grub.cfg` path. [`entries_to_enums()`](../grub_wiz/GrubCfgParser.py:95) gives the `GRUB_DEFAULT` enum real descriptions instead of the raw keyword. |
-| M5 | ☐ | Unchanged. |
+| M5 | ✅ | [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) unpacks `make_warns()` and iterates `warnings.items()`; [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:215) writes through an `io.StringIO` stream. [`tests/test_debug_entry_points.py`](test_debug_entry_points.py) exercises both. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
 | M7 | ✅ | User state directory is `0700`; `warn-db.yaml` is `0600`; the generated template is written user-owned instead of `root:root`. |
 | M8–M11 | ☐ | Unchanged. |
@@ -265,10 +265,12 @@ In the enum loop, [`bad`](../grub_wiz/WizValidator.py:413) is assigned only when
 
 **Remediation:** the parser builds a list of `{'type', 'title'}` dicts (deduped by title, exclusions and `only_very_top` unchanged) and its regex alternates over `ENTRY_KEYWORDS`, so submenus are found. [`entries_to_enums()`](../grub_wiz/GrubCfgParser.py:95) converts that list to the `{value: description}` mapping used by the config, with human-readable descriptions from [`ENUM_DESCRIPTIONS`](../grub_wiz/GrubCfgParser.py:28); [`main.py`](../grub_wiz/main.py:1275) uses it instead of `.update(list)`. The module's `main()` now requires exactly one path and exits 2 with a usage message otherwise. [`tests/test_grub_cfg_parser.py`](test_grub_cfg_parser.py) covers the return type, both keywords, quoting, exclusions/dedup, `only_very_top`, the enum descriptions, and both CLI outcomes.
 
-### M5. Debug/demo entry points are broken
+### M5. Debug/demo entry points are broken — ✅ FIXED
 
-- [`WizValidator.demo()`](../grub_wiz/WizValidator.py:436) treats the two return values of [`make_warns()`](../grub_wiz/WizValidator.py:186) as an iterable of warning pairs, so `--validator-demo` fails. A `TypeError` was reproduced.
-- [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:147) calls `yaml.dump(self.data)` without a stream; ruamel raises `TypeError: Need a stream argument...`. Verified.
+- [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) treated the two return values of [`make_warns()`](../grub_wiz/WizValidator.py:294) as an iterable of warning pairs, so `--validator-demo` failed. A `TypeError` was reproduced.
+- [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:215) called `yaml.dump(self.data)` without a stream; ruamel raised `TypeError: Need a stream argument...`. Verified.
+
+**Remediation:** [`demo()`](../grub_wiz/WizValidator.py:602) now unpacks `warnings, _all_warn_info = self.make_warns(vals)` and its printer iterates `warnings.items()`; the previous code also iterated the dict as `(param, pairs)` pairs and would have raised `ValueError` after the first crash was fixed. [`dump()`](../grub_wiz/CannedConfig.py:215) writes to an `io.StringIO` and prints the buffered YAML, which is also how the other YAML writers in the package call ruamel. [`tests/test_debug_entry_points.py`](test_debug_entry_points.py) runs `demo()` against a stubbed disk probe and asserts a known warning is printed, then checks `dump()` emits the configured YAML.
 
 ### M6. User detection prefers the terminal login over `SUDO_USER` — ✅ FIXED
 
@@ -335,7 +337,7 @@ The tests pass (`20 passed`) but:
 
 ## Lower-severity and polish findings
 
-- [`WizValidator.demo()`](../grub_wiz/WizValidator.py:436) and [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:147) are broken (above).
+- ✅ [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) and [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:216) were broken and are now fixed (M5).
 - [`WizValidator.get_full_path_and_check_existence()`](../grub_wiz/WizValidator.py:142) expands `$prefix` to `/boot/grub` always at [`WizValidator.py:161`](../grub_wiz/WizValidator.py:161), which is wrong on Fedora (`/boot/grub2`).
 - [`WizValidator.probe_disk_layout()`](../grub_wiz/WizValidator.py:89) “early break” only exits the inner partition loop, not the device loop.
 - [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128) uses a bare `except:` at [`GrubFile.py:165`](../grub_wiz/GrubFile.py:165); it can join unrelated lines after a malformed trailing backslash and only supports double quotes.
@@ -395,7 +397,7 @@ The tests pass (`20 passed`) but:
 12. ✅ Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
 13. ✅ Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
 14. Run `update-grub` after restore or clearly document the two-step behavior; check restore success (M15).
-15. ✅ Fix `EXPERT_EDIT` (M3) and `GrubCfgParser` (M4); ☐ fix `demo()` and `dump()` (M5).
+15. ✅ Fix `EXPERT_EDIT` (M3), `GrubCfgParser` (M4), and `demo()`/`dump()` (M5).
 
 **P2 — hardening, testing, and maintainability**
 
@@ -434,3 +436,4 @@ The tests pass (`20 passed`) but:
 - Shell-value probe (H9): `1024x768,auto` and paths without spaces pass unquoted; an unquoted space is refused with a quoting hint; `$(reboot)`, backticks and `"$(reboot)"` are refused by default; `$(lsb_release -i -s)` is accepted only for a parameter whose spec opted in (and by expert edit); every shipped enum passes [`check_shell_value()`](../grub_wiz/main.py:1083) and matches its own `edit_re`. `pytest -q` — 145 passed.
 - Validator probe (M1–M2): an unquoted `GRUB_CMDLINE_LINUX='rd.luks.uuid=abc rd.lvm.vg=test'` now warns while the double- and single-quoted forms and `foo="a b"` do not; `GRUB_DISTRIBUTOR` warns for ABSENT, COMMENT, `''`, `'""'` and whitespace-only, and does not warn for a plain name or a `$(...)`/backtick command. Enum ordering probes show a warning only on the parameter whose value is actually invalid. `EXPERT_EDIT` is a `str`, `has_edit_regex(EXPERT_EDIT)` is `False`, and an adopted `GrubFile` parameter carries the string sentinel. `pytest -q` — 151 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.
+

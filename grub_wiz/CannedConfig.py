@@ -1,6 +1,7 @@
 #!/usr/bin/env
 """
 """
+import io
 import re
 from importlib.resources import files
 from ruamel.yaml import YAML
@@ -213,9 +214,12 @@ class CannedConfig:
         return None
 
     def dump(self):
-      """ Dump the wired/initial configuration"""
-      string = yaml.dump(self.data)
-      print(string)
+        """Print the wired/initial configuration as YAML."""
+        # ruamel's dump() requires a stream; sys.stdout would also work but a
+        # buffer keeps the output together and makes the method easy to test.
+        stream = io.StringIO()
+        yaml.dump(self.data, stream)
+        print(stream.getvalue())
 
 def main():
     """ TBD """

@@ -600,14 +600,14 @@ class WizValidator:
         return warns, all_warn_info
 
     def demo(self, param_defaults):
-        """ TBD """
+        """Print the warnings produced by a set of illustrative configs."""
         def dump(title):
             nonlocal warnings
             print(f'\n{title}')
             if not warnings:
                 print('  (no warnings)')
             else:
-                for param, pairs in warnings:
+                for param, pairs in warnings.items():
                     for pair in pairs:
                         print(f'{param:>30} {pair[0]:>4} {pair[1]}')
 
@@ -662,5 +662,7 @@ class WizValidator:
             vals = deepcopy(param_defaults)
             for param, val in overrides.items():
                 vals[param] = val
-            warnings = self.make_warns(vals)
+            # make_warns() returns (warns, all_warn_info); only the per-param
+            # warning dict is printed here.
+            warnings, _all_warn_info = self.make_warns(vals)
             dump(title)
