@@ -956,9 +956,24 @@ class WarnScreen(GrubWizScreen):
         line += '   ESC=back [q]uit'
         gw.add_fancy_header(line)
 
+    def refresh_warn_info(self):
+        """ Recompute warning metadata from the live parameter values.
+
+            ``all_info`` drives this screen, but it is only refreshed by an
+            audit.  Parameter edits can add, remove, or re-grade warnings
+            while this instance exists, and the screen can be entered from
+            HOME without passing through REVIEW, so the audit runs on every
+            draw instead of once per session.  It is idempotent and only
+            marks the database dirty when something actually changed.
+        """
+        gw = self.gw
+        _warns, all_warn_info = gw.wiz_validator.make_warns(gw.param_values)
+        gw.warn_db.audit_info(all_warn_info)
+
     def draw_body(self):
         """ TBD """
         gw = self.gw
+        self.refresh_warn_info()
         db = gw.warn_db
         all_info = db.all_info
         keys = sorted(all_info.keys())

@@ -42,7 +42,6 @@ class WarnDB:
         self.all_info: Dict[str, int] = {}  # All warning info: key -> severity (1-4)
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
-        self.audited: bool = False  # Track if audit_info() has been called
 
         # Suck up the file on startup (initial refresh)
         # Note: config_dir is already created by UserConfigDir
@@ -161,7 +160,11 @@ class WarnDB:
     def audit_info(self, all_warn_info: dict):
         """
         Update the warning database with current validation info.
-        Should only be called once per instantiation.
+
+        Safe to call repeatedly: every call reconciles ``all_info`` and the
+        suppressed set with the supplied snapshot, so warnings that appear,
+        disappear, or change severity after a parameter edit are reflected
+        immediately.  Calling it again with the same snapshot is a no-op.
 
         Args:
             all_warn_info: Dict mapping warning keys to severity levels (1-4)
@@ -171,11 +174,6 @@ class WarnDB:
         - Removes orphaned keys from suppressed warnings list
         - Updates severity if changed
         """
-        if self.audited:
-            return  # Already audited this session
-
-        self.audited = True
-
         # Update all_info with new data (write with sorted keys so looks good)
         new_all_info = {k: all_warn_info[k] for k in sorted(all_warn_info)}
 

@@ -41,7 +41,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M5 | ✅ | [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) unpacks `make_warns()` and iterates `warnings.items()`; [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:215) writes through an `io.StringIO` stream. [`tests/test_debug_entry_points.py`](test_debug_entry_points.py) exercises both. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
 | M7 | ✅ | User state directory is `0700`; `warn-db.yaml` is `0600`; the generated template is written user-owned instead of `root:root`. |
-| M8–M11 | ☐ | Unchanged. |
+| M8 | ✅ | [`WarnDB.audit_info()`](../grub_wiz/WarnDB.py:160) no longer latches after its first call: it reconciles `all_info`, severities, and orphaned inhibits against every snapshot it is given, and is a no-op when the snapshot is unchanged. [`WarnScreen.draw_body()`](../grub_wiz/main.py:973) re-audits live values before rendering, so entering the screen from HOME is covered too. [`tests/test_warn_db.py`](test_warn_db.py) covers repeat audits, later orphan cleanup, clean no-op redraws, and the screen redraw. |
+| M9–M11 | ☐ | Unchanged. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
 | M13–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
@@ -280,9 +281,11 @@ In the enum loop, [`bad`](../grub_wiz/WizValidator.py:413) is assigned only when
 
 The config dir is `0755` ([`UserConfigDir.py:96`](../grub_wiz/UserConfigDir.py:96)); backups are `0644` ([`BackupMgr.py:126`](../grub_wiz/BackupMgr.py:126)). Other local users can list and read backups. In addition, the generated `canned_config.yaml` was observed as `root:root` in the user’s directory because [`CannedConfig.py:45`](../grub_wiz/CannedConfig.py:45) does not call `give_to_user()`. Use `0700`/`0600` for the directory and sensitive files, and fix ownership consistently.
 
-### M8. Warning DB audit runs only once per instance
+### M8. Warning DB audit runs only once per instance — ✅ FIXED
 
-[`WarnDB.audit_info()`](../grub_wiz/WarnDB.py:152) returns immediately after the first call ([`WarnDB.py:165`](../grub_wiz/WarnDB.py:165)). [`ReviewScreen.add_body()`](../grub_wiz/main.py:451) calls it on every redraw, so new warnings and orphan cleanup after edits are not reflected in the warnings-configuration screen. The review screen still shows live warnings from `make_warns()`, but [`WarnScreen`](../grub_wiz/main.py:862) reads the stale `all_info`.
+[`WarnDB.audit_info()`](../grub_wiz/WarnDB.py:152) returned immediately after the first call ([`WarnDB.py:165`](../grub_wiz/WarnDB.py:165)). [`ReviewScreen.add_body()`](../grub_wiz/main.py:451) calls it on every redraw, so new warnings and orphan cleanup after edits were not reflected in the warnings-configuration screen. The review screen still showed live warnings from `make_warns()`, but [`WarnScreen`](../grub_wiz/main.py:862) reads the stale `all_info`.
+
+**Remediation:** the `audited` latch is gone. [`audit_info()`](../grub_wiz/WarnDB.py:160) now performs the full reconciliation on every call — it replaces `all_info` with the sorted snapshot, bumps the dirty counter only when the snapshot or the suppressed set actually changed, and purges inhibits whose warning disappeared. Repeated calls with an unchanged snapshot leave `dirty_count` at zero, so redraws do not cause spurious writes. [`WarnScreen`](../grub_wiz/main.py:959) also gained `refresh_warn_info()`, which calls `make_warns()` on the live `param_values` and audits the result at the start of [`draw_body()`](../grub_wiz/main.py:973); this covers entering the warnings screen directly from HOME without a REVIEW redraw. [`tests/test_warn_db.py`](test_warn_db.py) verifies that a later audit adds, re-grades, and removes warnings, that orphaned inhibits are purged on later audits and persisted, that an identical re-audit stays clean, and that a `WarnScreen` redraw replaces a startup warning with a post-edit warning.
 
 ### M9. `GrubFile` writing is brittle around sentinels and `assert`
 
