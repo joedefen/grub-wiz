@@ -12,8 +12,8 @@ The project has a coherent modular structure and a good safety-oriented concept,
 
 1. Root writes into a user-controlled directory, enabling symlink-based arbitrary root file overwrite; combined with restore + `update-grub`, this can become root code execution.
 2. `/etc/default/grub` is overwritten without syntax validation, atomically, or with rollback; a failed `update-grub` leaves the risky file in place.
-3. `--discovery=enable|disable` crashes due to a typo.
-4. Disk-layout detection is effectively dead due to wrong JSON key casing, so LUKS/LVM/multiboot warnings are wrong.
+3. ~~`--discovery=enable|disable` crashes due to a typo.~~ Fixed: the branch reads `opts.discovery` and is covered by [`tests/test_cli_args.py`](test_cli_args.py).
+4. ~~Disk-layout detection is effectively dead due to wrong JSON key casing, so LUKS/LVM/multiboot warnings are wrong.~~ Fixed: the probe reads `lsblk`'s lowercase keys, walks flat and nested layouts, and no longer treats vfat as another OS.
 5. The validator crashes when any cross-referenced parameter is missing from the active parameter set.
 6. The documented custom-config workflow cannot produce a valid, functional config.
 7. ~~`requires-python >=3.8` is false: the code uses PEP 701 f-strings (Python 3.12+) and the pinned dependency requires Python 3.10+.~~ Fixed: the f-string was rewritten and the project now declares `>=3.10`.
@@ -27,7 +27,9 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | C1 | ✅ | Root-owned state moved to `/var/lib/grub-wiz` (cache, rollback) and `/run/grub-wiz` (session). User-directory writes use a directory fd plus `O_CREAT|O_EXCL|O_NOFOLLOW`, `fstat`/`fchmod`/`fchown`, and `os.replace()`. Restore rejects symlinks, NUL bytes, and command substitution. |
 | C2 | ✅ | Candidate is staged beside the target and checked with `sh -n` (`grub-script-check` is advisory only); the previous file is snapshotted in memory and in `/var/lib/grub-wiz`; replacement is atomic; `commit_and_update()` rolls the file back when the GRUB update fails and re-runs the update, so `grub.cfg` matches the restored file. |
 | C3 | ✅ | The only PEP 701 f-string was rewritten, so nothing in the tree needs 3.12+ syntax. `requires-python` is now `>=3.10` (the floor imposed by `console-window==2.0.1`), classifiers cover 3.10–3.13, and CI tests 3.10–3.13. |
-| H1–H8 | ☐ | Unchanged. |
+| H1 | ✅ | [`main.py:1892`](../grub_wiz/main.py:1892) reads `opts.discovery`; `--discovery=enable\|disable\|show` all exit 0, and [`tests/test_cli_args.py`](test_cli_args.py) covers all three. |
+| H2 | ✅ | `probe_disk_layout()` reads lowercase keys, walks flat and nested `lsblk` trees, skips `loop`/`rom`, counts only NTFS/exFAT and Microsoft partition GUIDs on non-removable media, and dedupes `efibootmgr` entries by `\EFI\<dir>`. [`tests/test_disk_layout.py`](test_disk_layout.py) covers 16 cases. |
+| H3–H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
 | M1–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
@@ -35,7 +37,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M8–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
-Remaining P0 work is H1, H2, H3, and H8.
+Remaining P0 work is H3 and H8.
 
 ---
 
@@ -114,7 +116,7 @@ So the effective minimum is Python 3.12, not 3.8. Installation on 3.8–3.11 is 
 
 ## High-severity findings
 
-### H1. `--discovery=enable|disable` always crashes
+### H1. `--discovery=enable|disable` always crashes — ✅ FIXED
 
 [`main.py:1890`](../grub_wiz/main.py:1890) references `opts.paramd` instead of `opts.discovery`:
 
@@ -122,7 +124,9 @@ So the effective minimum is Python 3.12, not 3.8. Installation on 3.8–3.11 is 
 
 Reproduced for both `--discovery=enable` and `--discovery=disable`: `AttributeError: 'Namespace' object has no attribute 'paramd'`. This also means the README’s advertised disable command at [`README.md:216`](../README.md:216) is broken. `--discovery=show` works.
 
-### H2. Disk-layout detection never detects anything
+**Remediation:** [`main.py:1892`](../grub_wiz/main.py:1892) now passes `opts.discovery == 'enable'` to [`ParamDiscovery.manual_enable()`](../grub_wiz/ParamDiscovery.py:79). A scan of the module found no other `opts.*` reference without a matching `add_argument()`, and the README text needed no change. All three branches were replayed through `main()` with `GrubWiz` and the sudo re-exec stubbed: `enable` → `manual_enable(True)`, `disable` → `manual_enable(False)`, `show` → dumps the defined parameter names, each exiting 0. Regression coverage is in [`tests/test_cli_args.py`](test_cli_args.py).
+
+### H2. Disk-layout detection never detects anything — ✅ FIXED
 
 [`WizValidator.probe_disk_layout()`](../grub_wiz/WizValidator.py:26) runs `lsblk -o FSTYPE,PARTTYPE -J`, but reads uppercase keys:
 
@@ -135,6 +139,8 @@ Reproduced for both `--discovery=enable` and `--discovery=disable`: `AttributeEr
 - Partition-based multi-boot detection is always false.
 
 Consequences: the LUKS/LVM warnings at [`WizValidator.py:262`](../grub_wiz/WizValidator.py:262) and [`WizValidator.py:267`](../grub_wiz/WizValidator.py:267) never fire, and the OS-prober advice is wrong. Also, if the casing were fixed, every UEFI ESP (vfat at [`WizValidator.py:71`](../grub_wiz/WizValidator.py:71)) would be mistaken for another OS, so simply fixing key case is not sufficient.
+
+**Remediation:** [`probe_disk_layout()`](../grub_wiz/WizValidator.py:55) now reads the lowercase JSON keys and walks every device depth-first via [`_walk_block_devices()`](../grub_wiz/WizValidator.py:38), so flat and nested `lsblk` layouts are both scanned; `loop` and `rom` devices are skipped. Multi-boot detection no longer treats vfat as evidence on its own: only NTFS/exFAT filesystems and the Microsoft basic-data/recovery partition GUIDs count, and removable media is excluded. The `efibootmgr` fallback now groups entries by their `\EFI\<dir>` loader directory, so one OS that registers both shim and grub (as on the audit host) is not counted twice. The same host now probes as `has_another_os=True, is_luks_active=True` instead of three `False`s. Hermetic coverage in [`tests/test_disk_layout.py`](test_disk_layout.py) exercises flat vs. nested JSON, LUKS/LVM (including LVM below a LUKS mapping), ESP-only systems, internal vs. removable NTFS, loop devices, duplicate EFI loaders, missing `lsblk`, bad JSON, and caching.
 
 ### H3. Validator crashes when a cross-referenced parameter is missing
 
@@ -329,9 +335,9 @@ The tests pass (`20 passed`) but:
 
 1. ✅ Fix the privilege boundary (C1): move root-owned state out of the user directory and eliminate symlink-following writes.
 2. ✅ Make the commit path validate, atomically replace, and roll back (C2).
-3. Fix `requires-python` and classifiers to match reality (C3).
-4. Fix `opts.paramd` (H1).
-5. Fix `lsblk` key casing and scan both flat devices and children; stop treating every vfat ESP as another OS (H2).
+3. ✅ Fix `requires-python` and classifiers to match reality (C3).
+4. ✅ Fix `opts.paramd` (H1).
+5. ✅ Fix `lsblk` key casing and scan both flat devices and children; stop treating every vfat ESP as another OS (H2).
 6. Make validator message construction lazy so missing cross-references cannot crash startup (H3).
 7. Change destructive confirmation defaults to “no” and require exact confirmation (H8).
 
@@ -375,4 +381,7 @@ The tests pass (`20 passed`) but:
 - Symlink probe: an `os.replace()`-based write replaced a destination symlink without modifying its target; `safe_read_bytes()` refused symlinks; `atomic_user_write()` rejected a path outside the user state directory; no temporary files remained.
 - Validator probe: `grub-script-check /etc/default/grub` succeeds on the host, but fails with `Syntax error at line 9` on the stock Ubuntu sample because of the backtick `GRUB_DISTRIBUTOR` line. This is why `sh -n` is the gate and `grub-script-check` is advisory.
 - Hermetic tests inject a fake `UserConfigDir`: NUL rejection, `sh -n` rejection (unterminated quote), successful atomic commit plus rollback copy, advisory `grub-script-check`, rollback and update re-run on failure, failed-rollback `CRITICAL` reporting, failed post-rollback update reporting, and rollback of a target that did not previously exist.
+- CLI probe (H1): `main()` replayed with `GrubWiz` and `rerun_module_as_root` stubbed; `--discovery=enable`, `--discovery=disable`, and `--discovery=show` all exit 0 with the expected `manual_enable()` argument.
+- Disk-layout probe (H2): the host previously probed as `has_another_os=False, is_luks_active=False, is_lvm_active=False`; it now reports `has_another_os=True, is_luks_active=True, is_lvm_active=False`, matching its `crypto_LUKS` partitions, Microsoft basic-data partition, and separate Kubuntu/Debian boot entries. [`tests/test_disk_layout.py`](test_disk_layout.py) feeds canned `lsblk`/`efibootmgr` output so the results do not depend on the host.
+- `pytest -q` — 49 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.

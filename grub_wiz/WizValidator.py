@@ -17,11 +17,40 @@ from .WarnDB import WarnDB
 
 class WizValidator:
     """ TBD """
+
+    # GPT partition-type GUIDs (lowercase) used by the disk-layout heuristics.
+    GPT_WINDOWS_RECOVERY = 'de94bba4-06d9-4d40-a16a-bfd50179d6ac'
+    GPT_MICROSOFT_BASIC_DATA = 'ebd0a0a2-b9e5-4433-87c0-68b6b72699c7'
+    GPT_LINUX_LVM = 'e6d6d379-f507-44c2-a23c-238f2a3df928'
+    # Filesystems only another OS is likely to use.
+    OTHER_OS_FSTYPES = ('ntfs', 'exfat')
+    WINDOWS_PARTTYPES = (GPT_WINDOWS_RECOVERY, GPT_MICROSOFT_BASIC_DATA)
+    LUKS_FSTYPES = ('crypto_luks', 'crypto_luks2')
+    LVM_FSTYPES = ('lvm2_member',)
+
     def __init__(self, param_cfg):
         # Cache for the disk probe results
         self._disk_layout_cache: Optional[SimpleNamespace] = None
         self.param_cfg = param_cfg
         # ... other initializations ...
+
+    @staticmethod
+    def _walk_block_devices(devices):
+        """Yield every device in an ``lsblk -J`` tree, including nested ones.
+
+        ``lsblk`` normally nests partitions under their disk in ``children``,
+        but a flat list is also possible (containers, ZFS, loop/rom devices,
+        single-partition hosts), so both shapes must be handled.
+        """
+        stack = list(devices)
+        while stack:
+            device = stack.pop()
+            if not isinstance(device, dict):
+                continue
+            yield device
+            children = device.get('children')
+            if isinstance(children, list):
+                stack.extend(children)
 
     def probe_disk_layout(self) -> SimpleNamespace:
         """
@@ -42,9 +71,10 @@ class WizValidator:
             is_lvm_active=False
         )
 
-        # lsblk is fast and outputs in JSON format
-        cmd = ['lsblk', '-o', 'FSTYPE,PARTTYPE', '-J']
-
+        # lsblk is fast and outputs in JSON format.  The JSON keys are always
+        # lowercase ("fstype", "parttype", "rm", "type") even though the -o
+        # column names are conventionally written in uppercase.
+        cmd = ['lsblk', '-o', 'FSTYPE,PARTTYPE,RM,TYPE', '-J']
         try:
             process = subprocess.run(
                 cmd,
@@ -60,35 +90,35 @@ class WizValidator:
 
             data = json.loads(process.stdout)
 
-            # 3. Scan Partitions
-            for device in data.get('blockdevices', []):
-                if 'children' in device:
-                    for partition in device['children']:
-                        fstype = partition.get('FSTYPE', '').lower()
-                        parttype = partition.get('PARTTYPE', '').lower()
+            # 3. Scan every block device, flat or nested
+            for device in self._walk_block_devices(data.get('blockdevices', [])):
+                fstype = str(device.get('fstype') or '').lower()
+                parttype = str(device.get('parttype') or '').lower()
+                device_type = str(device.get('type') or '').lower()
+                removable = device.get('rm') in (True, 1, '1')
 
-                        # --- A. Other OS Detection (Windows/Other) ---
-                        if fstype in ('ntfs', 'vfat', 'fat32', 'exfat'):
-                            result.has_another_os = True
+                # Optical and loop devices never indicate another OS.
+                if device_type in ('loop', 'rom'):
+                    continue
 
-                        # Windows Recovery Partition GUID
-                        if 'de94bba4-06d9-4d40-a16a-bfd50179d6ac' in parttype:
-                            result.has_another_os = True
+                # --- A. Other OS Detection (Windows/Other) ---
+                # Every UEFI system has a vfat EFI System Partition, so vfat
+                # alone proves nothing.  Only filesystems/partition types that
+                # are essentially Windows-specific count, and removable media
+                # (USB sticks, SD cards) is ignored to avoid false positives.
+                if not removable and (fstype in self.OTHER_OS_FSTYPES
+                                      or parttype in self.WINDOWS_PARTTYPES):
+                    result.has_another_os = True
 
-                        # --- B. LUKS/LVM Detection (Requires Special Kernel Args) ---
+                # --- B. LUKS/LVM Detection (Requires Special Kernel Args) ---
 
-                        # LUKS Check
-                        if fstype in ('crypto_luks', 'crypto_luks2'):
-                            result.is_luks_active = True
+                # LUKS Check
+                if fstype in self.LUKS_FSTYPES:
+                    result.is_luks_active = True
 
-                        # LVM Check (FSTYPE or PARTTYPE)
-                        if fstype == 'lvm2_member' or \
-                           'e6d6d379-f507-44c2-a23c-238f2a3df928' in parttype:
-                            result.is_lvm_active = True
-
-                        # Optimization: If all flags are True, we can stop early
-                        if result.has_another_os and result.is_luks_active and result.is_lvm_active:
-                            break
+                # LVM Check (FSTYPE or PARTTYPE)
+                if fstype in self.LVM_FSTYPES or parttype == self.GPT_LINUX_LVM:
+                    result.is_lvm_active = True
 
         except (FileNotFoundError, json.JSONDecodeError):
             # If lsblk is missing or JSON output is bad, the default 'False' result will be cached.
@@ -114,22 +144,30 @@ class WizValidator:
                     #   Boot0002* UEFI OS  HD(4,GPT,...)/File(\EFI\BOOT\BOOTX64.EFI)    <- Generic fallback
                     #   Boot0003* UEFI:CD/DVD Drive                                      <- No device info
 
-                    os_boot_entries = []
+                    # Collect one key per OS (its \EFI\<dir> directory).
+                    # A single OS often registers several loaders (shim, grub,
+                    # fallback) that point at the same directory, and counting
+                    # those separately would report a false multi-boot.
+                    os_boot_dirs = set()
                     for line in efi_process.stdout.split('\n'):
-                        if line.startswith('Boot') and '*' in line:
-                            # Must have device info (HD(...))
-                            has_device = 'HD(' in line
+                        upper_line = line.upper()
+                        if not (line.startswith('Boot') and '*' in line):
+                            continue
 
-                            # Must NOT be the generic BOOT fallback directory
-                            # Check both Windows-style and Unix-style path separators
-                            is_generic_boot = r'\EFI\BOOT\BOOT' in line.upper() or '/EFI/BOOT/BOOT' in line.upper()
+                        # Must have device info (HD(...))
+                        if 'HD(' not in line:
+                            continue
 
-                            # Valid OS entry: has device info AND not generic fallback
-                            if has_device and not is_generic_boot:
-                                os_boot_entries.append(line)
+                        # Must NOT be the generic BOOT fallback directory
+                        # Check both Windows-style and Unix-style path separators
+                        if r'\EFI\BOOT\BOOT' in upper_line or '/EFI/BOOT/BOOT' in upper_line:
+                            continue
 
-                    # If 2+ OS-specific boot entries, likely multi-boot setup
-                    if len(os_boot_entries) >= 2:
+                        loader_dir = re.search(r'[\\/]EFI[\\/]([^\\/]+)[\\/]', upper_line)
+                        os_boot_dirs.add(loader_dir.group(1) if loader_dir else upper_line)
+
+                    # If 2+ OS-specific boot directories, likely multi-boot setup
+                    if len(os_boot_dirs) >= 2:
                         result.has_another_os = True
             except (FileNotFoundError, PermissionError):
                 # efibootmgr not installed or insufficient permissions
