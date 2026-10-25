@@ -789,18 +789,22 @@ class CompareScreen(GrubWizScreen):
     def add_body(self):
         """ TBD """
         def get_val(param, data):
-            if param not in data:
+            # param_data holds SimpleNamespace records; a parameter that only
+            # exists in the other file is simply absent here.
+            entry = data.get(param)
+            if entry is None:
                 return GrubFile.ABSENT, None
-            return data[param].value, data[param].line_num
+            return entry.value, entry.line_num
 
         gw = self.gw
 
         if self.results is None:
             self.results, lines = [], []
+            # GrubFile already adds a SimpleNamespace record to param_data for
+            # every unvalidated (extra) parameter it discovers, so extra_params
+            # (which holds config dicts) must NOT be merged into param_data.
             grub1 = GrubFile(gw.param_cfg, self.bak1)
             grub2 = GrubFile(gw.param_cfg, self.bak2)
-            grub1.param_data.update(grub1.extra_params)
-            grub2.param_data.update(grub2.extra_params)
             data1 = grub1.param_data
             data2 = grub2.param_data
             params = sorted(list(set(data1.keys()) | set(data2.keys())))

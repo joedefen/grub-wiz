@@ -30,7 +30,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | H1 | ✅ | [`main.py:1892`](../grub_wiz/main.py:1892) reads `opts.discovery`; `--discovery=enable\|disable\|show` all exit 0, and [`tests/test_cli_args.py`](test_cli_args.py) covers all three. |
 | H2 | ✅ | `probe_disk_layout()` reads lowercase keys, walks flat and nested `lsblk` trees, skips `loop`/`rom`, counts only NTFS/exFAT and Microsoft partition GUIDs on non-removable media, and dedupes `efibootmgr` entries by `\EFI\<dir>`. [`tests/test_disk_layout.py`](test_disk_layout.py) covers 16 cases. |
 | H3 | ✅ | [`getvals()`](../grub_wiz/WizValidator.py:263) resolves each key independently, [`sh()`](../grub_wiz/WizValidator.py:251) is `None`-safe with fallback names, companion-parameter rules require the companion to be active, and the enum loop resets `bad` per parameter. [`tests/test_validator_rules.py`](test_validator_rules.py:802) covers the audit reproduction and five related paths. |
-| H4–H8 | ☐ | Unchanged. |
+| H5 | ✅ | The COMPARE screen no longer merges `extra_params` config dicts into `param_data`; `GrubFile` already registers a `SimpleNamespace` record per unvalidated parameter. `GrubFile` also works on a copy of the caller's config so reading a backup cannot adopt its extra params into `gw.param_cfg`. [`tests/test_compare_screen.py`](test_compare_screen.py) renders backups that contain unvalidated parameters. |
+| H4, H6–H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
 | M1–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
@@ -173,7 +174,7 @@ Removing `_distro_vars_` would also make [`DistroVars`](../grub_wiz/DistroVars.p
 
 **Remediation:** [`validate_schema()`](../grub_wiz/CannedConfig.py:142) now skips top-level sections whose names start with `_` (after still requiring a mapping value), so [`_distro_vars_`](../grub_wiz/canned_config.yaml:1), [`_re_specs_`](../grub_wiz/canned_config.yaml:79), and [`_update_initramfs_triggers_`](../grub_wiz/canned_config.yaml:22) are accepted and remain available to [`DistroVars`](../grub_wiz/DistroVars.py:46) and [`_process_config()`](../grub_wiz/CannedConfig.py:77). Required per-parameter fields are now declared as [`required_cfg_keys`](../grub_wiz/CannedConfig.py:26) (`default`, `edit_re`, `enums`, `guidance`), excluding the runtime-derived `edit_re_human`; it is still accepted as an allowed key. A non-dict root now returns an error string instead of `False`. The README notes the reserved sections and required fields, and regression coverage in [`tests/test_canned_config.py`](test_canned_config.py) verifies that the packaged template validates, that an exact copy is loaded as the active custom config with regexes resolved and metadata intact, and that malformed configs still fall back with a warning (`pytest -q` passes, 64 tests).
 
-### H5. Compare screen crashes on unvalidated parameters
+### H5. Compare screen crashes on unvalidated parameters — ✅ FIXED
 
 [`CompareScreen.add_body()`](../grub_wiz/main.py:746) merges config dictionaries into parameter data:
 
@@ -184,6 +185,8 @@ But [`GrubFile.extra_params`](../grub_wiz/GrubFile.py:60) stores *config dicts* 
 `AttributeError: 'dict' object has no attribute 'value'`
 
 Any backup containing an unvalidated `GRUB_*` parameter (explicitly supported and documented) will crash the compare screen.
+
+**Remediation:** the merge is gone. [`GrubFile.read_file()`](../grub_wiz/GrubFile.py:285) already appends a `SimpleNamespace` record to `param_data` for every unvalidated parameter it adopts, so the compare screen now reads `param_data` alone, and [`get_val()`](../grub_wiz/main.py:791) treats a parameter missing from one backup as absent. [`GrubFile.__init__()`](../grub_wiz/GrubFile.py:52) also copies `supported_params` instead of mutating the caller's dict, so comparing a backup can no longer leak that backup's extra parameters into `gw.param_cfg`. Regression coverage in [`tests/test_compare_screen.py`](test_compare_screen.py) renders a backup with an unvalidated parameter, compares differing values of one, and asserts the caller's config is unchanged.
 
 ### H6. Restore/write replaces the screen stack but leaves the spinner bound to the old stack
 

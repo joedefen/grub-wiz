@@ -54,7 +54,10 @@ class GrubFile:
         Initializes the parser and reads the file immediately.
         """
         self.file_path = file_path if file_path else GrubFile.std_location
-        self.supported_params = supported_params
+        # Work on a copy: read_file() adopts unvalidated params by adding them
+        # to supported_params, and callers reuse their config dict (e.g. the
+        # compare screen builds several GrubFile instances from gw.param_cfg).
+        self.supported_params = dict(supported_params)
         self.lines: List[str] = []
         self.param_of: List[Optional[str]] = []
         # Structure: {PARAM: {'line_num': int/None, 'value': str, 'new_value': str/None}}
