@@ -11,7 +11,6 @@ Tests cover:
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add parent directory to path to import grub_wiz
@@ -175,7 +174,7 @@ def test_write_functionality():
     print("\n3. Continuation line should be written as single line:")
     # Should NOT have backslash continuation in output
     lines = result.split('\n')
-    cmdline_lines = [l for l in lines if 'GRUB_CMDLINE_LINUX_DEFAULT=' in l]
+    cmdline_lines = [line for line in lines if 'GRUB_CMDLINE_LINUX_DEFAULT=' in line]
     assert len(cmdline_lines) == 1, \
         f"Expected 1 GRUB_CMDLINE_LINUX_DEFAULT line, got {len(cmdline_lines)}"
     assert '\\' not in cmdline_lines[0], "Should not have backslash in written line"

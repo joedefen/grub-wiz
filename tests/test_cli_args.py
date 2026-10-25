@@ -72,3 +72,65 @@ def test_discovery_show_dumps_defined_params(monkeypatch, fake_wiz):
     assert excinfo.value.code == 0
     assert fake_wiz.param_discovery.dumped_with == ['quiet', 'splash']
     assert fake_wiz.param_discovery.state is None
+
+
+def test_run_cli_tears_down_curses_on_system_exit(monkeypatch):
+    """``sys.exit()`` from a curses-active path still restores the terminal."""
+    fake_grubwiz, stopped = _fake_grubwiz_singleton()
+    monkeypatch.setattr(cli, 'GrubWiz', fake_grubwiz)
+
+    def quit_now():
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli, 'main', quit_now)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.run_cli()
+
+    assert excinfo.value.code == 0
+    assert stopped == ['stop']
+
+
+def _fake_grubwiz_singleton():
+    """Return a fake ``GrubWiz`` holder and the list of cleanup calls."""
+    stopped = []
+
+    class FakeWindow:
+        def stop_curses(self):
+            stopped.append('stop')
+
+    return SimpleNamespace(singleton=SimpleNamespace(win=FakeWindow())), stopped
+
+
+def test_run_cli_tears_down_curses_on_exception(monkeypatch):
+    """The console entry point must clean up when ``main()`` raises (M14)."""
+    fake_grubwiz, stopped = _fake_grubwiz_singleton()
+    monkeypatch.setattr(cli, 'GrubWiz', fake_grubwiz)
+
+    def explode():
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(cli, 'main', explode)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.run_cli()
+
+    assert excinfo.value.code == 15
+    assert stopped == ['stop']
+
+
+def test_run_cli_tears_down_curses_on_interrupt(monkeypatch):
+    """Ctrl-C exits 130 and still leaves curses mode."""
+    fake_grubwiz, stopped = _fake_grubwiz_singleton()
+    monkeypatch.setattr(cli, 'GrubWiz', fake_grubwiz)
+
+    def interrupt():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, 'main', interrupt)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.run_cli()
+
+    assert excinfo.value.code == 130
+    assert stopped == ['stop']

@@ -172,7 +172,7 @@ class GrubFile:
                 if not (value_part.startswith('"') and value_part.endswith('\\')):
                     i += 1
                     continue
-            except:
+            except Exception:
                 i += 1
                 continue
 

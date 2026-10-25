@@ -21,7 +21,6 @@ import curses as cs
 from argparse import ArgumentParser
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
 from console_window import NAVIGATION_KEYS
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
@@ -335,7 +334,6 @@ class HomeScreen(GrubWizScreen):
             gw.add_fancy_header(line)
 
         tab = self.get_tab()
-        picked = gw.win.pick_pos
         ctx = gw.win.get_picked_context()
         if ctx:
             cat, ident = ctx.genre, getattr(ctx, 'param_name', '')
@@ -570,9 +568,9 @@ class ReviewScreen(HomeScreen):
                     pad = max(tab.lwid - display_width(sub_text), 0)
                     line = f'{" " * pad}{sub_text}  {hey[1]}'
                     # Add warning line with Context - TRANSIENT keeps it with parent
-                    cnt = gw.add_wrapped_body_line(line, tab.lwid+2,
-                                                  self.win.body.row_cnt==picked,
-                                                  context=Context(genre='warn', warn_key=warn_key))
+                    gw.add_wrapped_body_line(line, tab.lwid+2,
+                                             self.win.body.row_cnt==picked,
+                                             context=Context(genre='warn', warn_key=warn_key))
 
             if is_current:
                 emits = gw.drop_down_lines(param_name)
@@ -2155,12 +2153,43 @@ def main():
     time.sleep(1.0)
     wiz.main_loop()
 
-if __name__ == '__main__':
+def _restore_terminal():
+    """Leave curses mode if a screen was started (best effort)."""
+    win = GrubWiz.singleton.win if GrubWiz.singleton else None
+    if win is not None:
+        try:
+            win.stop_curses()
+        except Exception:
+            # Never mask the original failure while cleaning up.
+            pass
+
+
+def run_cli():
+    """Console-script entry point.
+
+    ``main()`` is also imported directly by the tests, so the exception
+    handling lives here instead of only in the ``__main__`` block.  The
+    installed ``grub-wiz`` script therefore exits through the same path as
+    ``python -m grub_wiz.main``: curses is torn down and the traceback is
+    printed instead of leaving the terminal in raw mode.
+    """
     try:
         main()
+    except KeyboardInterrupt:
+        _restore_terminal()
+        print('\nInterrupted.')
+        sys.exit(130)
+    except SystemExit:
+        # main() uses sys.exit() on paths that have already started curses
+        # (for example, quitting from the post-write menu).
+        _restore_terminal()
+        raise
     except Exception as exce:
-        if GrubWiz.singleton and GrubWiz.singleton.win:
-            GrubWiz.singleton.win.stop_curses()
+        _restore_terminal()
         print("exception:", str(exce))
         print(traceback.format_exc())
         sys.exit(15)
+
+
+if __name__ == '__main__':
+    run_cli()

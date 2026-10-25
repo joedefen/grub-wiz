@@ -7,7 +7,6 @@ back to the first enum, and the shipped default is now a real value.
 """
 
 from importlib.resources import files
-from types import SimpleNamespace
 
 from ruamel.yaml import YAML
 

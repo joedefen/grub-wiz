@@ -46,7 +46,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M10 | ✅ | [`DEFAULT_ETC_GRUB`](../grub_wiz/DistroVars.py:17) is the single constant; [`GrubFile.std_location`](../grub_wiz/GrubFile.py:54) and [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:19) derive from it. [`reinit_gw()`](../grub_wiz/main.py:1274) passes `DistroVars.etc_grub` to `GrubFile`, and `BackupMgr` is built with the same resolved target. |
 | M11 | ☐ | Unchanged. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
-| M13–M15 | ☐ | Unchanged. |
+| M13, M15 | ☐ | Unchanged. |
+| M14 | ◐ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses. The exact `console-window` pin and its `NAVIGATION_KEYS` monkeypatch remain under discussion. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
 No P0 items remain.
@@ -337,6 +338,8 @@ The tests pass (`20 passed`) but:
 - [`[project.license]`](../pyproject.toml:31) with `text` is the legacy form under PEP 639; prefer an SPDX `license = "MIT"` and `license-files`.
 - No `[project.optional-dependencies]`, no `[tool.pytest.ini_options]`, no `[tool.ruff]`/`[tool.mypy]`.
 - The console entry point [`grub-wiz = "grub_wiz.main:main"`](../pyproject.toml:35) bypasses the top-level exception handler in [`main.py:1919`](../grub_wiz/main.py:1919) when the process is already root. Exceptions can leave curses in a broken state.
+
+**Remediation:** Most of this item is addressed. `pyproject.toml` now uses PEP 639 metadata (`license = "MIT"`, `license-files = ["LICENSE"]`, `Metadata-Version: 2.4`), replaces the multimedia topic with System/Boot and Systems Administration classifiers, requires `flit_core>=3.12`, and adds dev extras plus `[tool.ruff]`/`[tool.mypy]` configuration. The console script now points at [`run_cli()`](../grub_wiz/main.py:2167), which wraps [`main()`](../grub_wiz/main.py:2097) for both the installed script and `python -m grub_wiz.main`; it restores curses on exceptions and `KeyboardInterrupt`, and regression coverage is in [`tests/test_cli_args.py`](test_cli_args.py). The exact `console-window` pin and the `NAVIGATION_KEYS` monkeypatch are intentionally unchanged pending a separate decision about the supported console-window version.
 
 ### M15. Restore does not make the restored configuration effective
 
