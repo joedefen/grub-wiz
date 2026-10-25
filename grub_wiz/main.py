@@ -1889,7 +1889,7 @@ def main():
 
     if opts.discovery is not None:
         if opts.discovery in ('enable', 'disable'):
-            enabled = wiz.param_discovery.manual_enable(opts.paramd == 'enable')
+            enabled = wiz.param_discovery.manual_enable(opts.discovery == 'enable')
             print(f'\nParameterDiscovery: {enabled=}')
         else:
             wiz.param_discovery.dump(wiz.defined_param_names)
