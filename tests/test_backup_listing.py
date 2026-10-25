@@ -118,3 +118,28 @@ def test_restore_list_keeps_one_row_per_file(tmp_path):
 
     assert {pair[1] for pair in gw.ordered_backup_pairs} == {first, second}
     assert {pair[0] for pair in gw.ordered_backup_pairs} == {content_checksum()}
+
+
+def test_backup_manager_resolves_user_config_lazily(monkeypatch, tmp_path):
+    """Importing the module must not create user state (audit M13).
+
+    The manager asks ``UserConfigDir`` for the singleton when it is
+    constructed, so the accessor must not exist as a module-level attribute.
+    """
+    import grub_wiz.BackupMgr as backup_module
+
+    assert not hasattr(backup_module, 'USER_CONFIG')
+    assert not hasattr(backup_module, 'GRUB_CONFIG_DIR')
+
+    fake = SimpleNamespace(user_state_dir=tmp_path / 'state')
+    calls = []
+    monkeypatch.setattr(
+        backup_module.UserConfigDir, 'get_singleton',
+        staticmethod(lambda app_name='grub-wiz':
+                     calls.append(app_name) or fake),
+    )
+
+    manager = backup_module.BackupMgr()
+
+    assert calls == ['grub-wiz']
+    assert manager.config_dir == fake.user_state_dir

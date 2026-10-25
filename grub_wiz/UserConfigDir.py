@@ -167,10 +167,13 @@ class UserConfigDir:
         try:
             path.mkdir(parents=True, exist_ok=True)
             st = os.lstat(path)
-            if not stat.S_ISDIR(st.st_mode):
-                raise RuntimeError(f"{label} path is not a directory: {path}")
+            # lstat() reports the link itself, so check S_ISLNK before
+            # S_ISDIR: otherwise every symlink is misreported as "not a
+            # directory" and the specific message below is unreachable.
             if stat.S_ISLNK(st.st_mode):
                 raise RuntimeError(f"{label} path is a symlink: {path}")
+            if not stat.S_ISDIR(st.st_mode):
+                raise RuntimeError(f"{label} path is not a directory: {path}")
             if must_be_root_owned and st.st_uid != 0:
                 raise RuntimeError(
                     f"{label} directory must be root-owned, found uid={st.st_uid}: {path}")

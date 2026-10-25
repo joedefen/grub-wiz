@@ -23,8 +23,6 @@ from .UserConfigDir import UserConfigDir
 # Derived from the single canonical constant (audit M10).  The application
 # passes ``DistroVars.etc_grub`` explicitly so a distro override is honoured.
 GRUB_DEFAULT_PATH = Path(DEFAULT_ETC_GRUB)
-USER_CONFIG = UserConfigDir.get_singleton("grub-wiz")
-GRUB_CONFIG_DIR = USER_CONFIG.user_state_dir
 
 # Regex pattern for identifying backup files: YYYYMMDD-HHMMSS-{CHECKSUM}.{TAG}.bak
 BACKUP_FILENAME_PATTERN = re.compile(
@@ -43,8 +41,12 @@ class BackupMgr:
         # Accept str for convenience; every method operates on a Path.
         self.target_path = Path(target_path)
 
-        # Use provided user_config or get singleton
-        self.user_config = user_config if user_config else USER_CONFIG
+        # Resolve the user state directory lazily.  The module used to call
+        # UserConfigDir.get_singleton() at import time, which created
+        # ~/.config/grub-wiz as a side effect of importing the package (and
+        # defeated test isolation, audit M13).
+        self.user_config = (user_config if user_config is not None
+                            else UserConfigDir.get_singleton("grub-wiz"))
         self.config_dir = self.user_config.user_state_dir
 
     def calc_checksum(self, source: Union[Path, str]) -> str:
