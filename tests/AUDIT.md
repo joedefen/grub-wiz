@@ -42,7 +42,9 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
 | M7 | ✅ | User state directory is `0700`; `warn-db.yaml` is `0600`; the generated template is written user-owned instead of `root:root`. |
 | M8 | ✅ | [`WarnDB.audit_info()`](../grub_wiz/WarnDB.py:160) no longer latches after its first call: it reconciles `all_info`, severities, and orphaned inhibits against every snapshot it is given, and is a no-op when the snapshot is unchanged. [`WarnScreen.draw_body()`](../grub_wiz/main.py:973) re-audits live values before rendering, so entering the screen from HOME is covered too. [`tests/test_warn_db.py`](test_warn_db.py) covers repeat audits, later orphan cleanup, clean no-op redraws, and the screen redraw. |
-| M9–M11 | ☐ | Unchanged. |
+| M9 | ✅ | [`write_file()`](../grub_wiz/GrubFile.py:346) no longer uses `assert`; `ABSENT` is ignored on both the existing-line and append paths, so it can never be written and cannot fail under `python -O`. `GRUB_TERMINAL` now defaults to `console`, and activation maps sentinel defaults to the first enum via [`_activation_default()`](../grub_wiz/main.py:1587). |
+| M10 | ✅ | [`DEFAULT_ETC_GRUB`](../grub_wiz/DistroVars.py:17) is the single constant; [`GrubFile.std_location`](../grub_wiz/GrubFile.py:54) and [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:19) derive from it. [`reinit_gw()`](../grub_wiz/main.py:1274) passes `DistroVars.etc_grub` to `GrubFile`, and `BackupMgr` is built with the same resolved target. |
+| M11 | ☐ | Unchanged. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
 | M13–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
@@ -287,19 +289,23 @@ The config dir is `0755` ([`UserConfigDir.py:96`](../grub_wiz/UserConfigDir.py:9
 
 **Remediation:** the `audited` latch is gone. [`audit_info()`](../grub_wiz/WarnDB.py:160) now performs the full reconciliation on every call — it replaces `all_info` with the sorted snapshot, bumps the dirty counter only when the snapshot or the suppressed set actually changed, and purges inhibits whose warning disappeared. Repeated calls with an unchanged snapshot leave `dirty_count` at zero, so redraws do not cause spurious writes. [`WarnScreen`](../grub_wiz/main.py:959) also gained `refresh_warn_info()`, which calls `make_warns()` on the live `param_values` and audits the result at the start of [`draw_body()`](../grub_wiz/main.py:973); this covers entering the warnings screen directly from HOME without a REVIEW redraw. [`tests/test_warn_db.py`](test_warn_db.py) verifies that a later audit adds, re-grades, and removes warnings, that orphaned inhibits are purged on later audits and persisted, that an identical re-audit stays clean, and that a `WarnScreen` redraw replaces a startup warning with a post-edit warning.
 
-### M9. `GrubFile` writing is brittle around sentinels and `assert`
+### M9. `GrubFile` writing is brittle around sentinels and `assert` — ✅ FIXED
 
-[`write_file()`](../grub_wiz/GrubFile.py:336) asserts `new_value != ABSENT` only in the existing-line loop ([`GrubFile.py:358`](../grub_wiz/GrubFile.py:358)); the append path ([`GrubFile.py:374`](../grub_wiz/GrubFile.py:374)) does not guard against `ABSENT`. An `AssertionError` was reproduced for a parameter with an existing line; if the parameter is absent, the same state can append the literal sentinel `≡` into the config. Additionally, `assert` is removed under `python -O`.
+[`write_file()`](../grub_wiz/GrubFile.py:346) asserted `new_value != ABSENT` only in the existing-line loop; the append path did not guard against `ABSENT`. An `AssertionError` was reproduced for a parameter with an existing line; if the parameter is absent, the same state could append the literal sentinel `≡` into the config. Additionally, `assert` is removed under `python -O`.
 
-Related: [`GRUB_TERMINAL`](../grub_wiz/canned_config.yaml:370) has `default: '#comment'`. [`activate_param()`](../grub_wiz/main.py:1353) uses that default verbatim, so activating an absent `GRUB_TERMINAL` writes `GRUB_TERMINAL=#comment` rather than a usable value.
+Related: [`GRUB_TERMINAL`](../grub_wiz/canned_config.yaml:380) had `default: '#comment'`. [`activate_param()`](../grub_wiz/main.py:1602) used that default verbatim, so activating an absent `GRUB_TERMINAL` wrote `GRUB_TERMINAL=#comment` rather than a usable value.
 
-### M10. Multiple sources of truth for the GRUB path
+**Remediation:** the `assert` is gone. Both write paths treat `ABSENT` as "no line to write": an existing line whose caller assigned `ABSENT` is left unchanged, and an absent parameter with an `ABSENT` value appends nothing. This behaves identically with or without `python -O`. Activation now calls [`_activation_default()`](../grub_wiz/main.py:1587), which treats `#comment`, `#absent`, and the internal `COMMENT`/`ABSENT` sentinels as documentation markers and falls back to the first enum (or `''`). The shipped `GRUB_TERMINAL` default is now `console`, a value that is also one of its enums. [`tests/test_grubfile_write.py`](test_grubfile_write.py) covers both write paths and the normal comment/append behaviour; [`tests/test_activation_default.py`](test_activation_default.py) covers the sentinel fallbacks and the shipped default.
 
-- [`GrubFile.std_location`](../grub_wiz/GrubFile.py:47) hardcodes `/etc/default/grub`.
-- [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:17) hardcodes it again.
+### M10. Multiple sources of truth for the GRUB path — ✅ FIXED
+
+- [`GrubFile.std_location`](../grub_wiz/GrubFile.py:54) hardcoded `/etc/default/grub`.
+- [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:19) hardcoded it again.
 - [`DistroVars`](../grub_wiz/DistroVars.py:46) resolves `etc_grub` from YAML.
 
-[`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1019) constructs `GrubFile` without a path, so reads ignore `DistroVars.etc_grub`, while commits use it. Any future distro override would read and write different files.
+[`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1274) constructed `GrubFile` without a path, so reads ignored `DistroVars.etc_grub`, while commits used it. Any future distro override would read and write different files.
+
+**Remediation:** [`DistroVars.DEFAULT_ETC_GRUB`](../grub_wiz/DistroVars.py:17) is now the only literal path. `DistroVars.default_yaml`, `GrubFile.std_location`, and `BackupMgr.GRUB_DEFAULT_PATH` all derive from it. At runtime the application uses the resolved value everywhere: [`GrubWiz.__init__()`](../grub_wiz/main.py:1197) builds `BackupMgr` with `Path(self.distro_vars.etc_grub)`, `reinit_gw()` passes `self.distro_vars.etc_grub` to `GrubFile`, and startup backups checksum/tag `backup_mgr.target_path`. A distro override in YAML therefore governs reads, backups, and commits. [`tests/test_grub_path.py`](test_grub_path.py) asserts the shared constant and that `reinit_gw()` passes the resolved path.
 
 ### M11. `reinit_gw()` retains stale validator state and mutates shared config
 
@@ -408,7 +414,7 @@ The tests pass (`20 passed`) but:
 17. Add tests for `GrubWriter`, `BackupMgr`, `WarnDB`, config validation, CLI parsing, and the commit/rollback path.
 18. Add CI, lint/type configuration, and a dev dependency group.
 19. ✅ Use `SUDO_USER` for ownership, tighten directory/file modes, and fix canned-template ownership (M6–M7).
-20. Refactor path handling to a single source of truth and refresh validator/config state on reinit (M10–M11).
+20. ✅ Refactor path handling to a single source of truth (M10); refresh validator/config state on reinit (M11).
 21. Replace stale `TBD` documentation, broad exceptions, and print-based diagnostics with logging.
 
 ---
@@ -437,6 +443,7 @@ The tests pass (`20 passed`) but:
 - Custom-config probe (H4): the packaged `canned_config.yaml` now passes `validate_schema()` unchanged, and an exact copy in a temporary user-config directory is selected as `using_path` with `edit_re` resolved against `_re_specs_` and `_distro_vars_` intact. [`tests/test_canned_config.py`](test_canned_config.py) also covers reserved metadata sections, runtime-only `edit_re_human`, malformed sections, and fallback to the packaged template. `pytest -q` — 64 passed.
 - Discovery probe (H7): [`tests/test_param_discovery.py`](test_param_discovery.py) injects a fake state directory and a fake `discover_params()`. It verifies that a missing cache is discovered on the first `ensure_discovered()`, that a one-week-old `OK` cache is regenerated and the regenerated set—not the stale in-memory snapshot—drives `get_absent()`, that a `NO_INFO` attempt is not repeated within a process, and that `GrubWiz.reinit_gw()` calls discovery before it drops unsupported parameters. `pytest -q` — 74 passed.
 - Shell-value probe (H9): `1024x768,auto` and paths without spaces pass unquoted; an unquoted space is refused with a quoting hint; `$(reboot)`, backticks and `"$(reboot)"` are refused by default; `$(lsb_release -i -s)` is accepted only for a parameter whose spec opted in (and by expert edit); every shipped enum passes [`check_shell_value()`](../grub_wiz/main.py:1083) and matches its own `edit_re`. `pytest -q` — 145 passed.
+- Sentinel/path probe (M9–M10): assigning `ABSENT` to an existing parameter or to an absent one produces no sentinel and no exception (also under `-O`, since there is no `assert`); activating `GRUB_TERMINAL` writes `console`, not `#comment`; `GrubFile.std_location`, `BackupMgr.GRUB_DEFAULT_PATH`, and `DistroVars.default_yaml` share `DEFAULT_ETC_GRUB`; `reinit_gw()` passes `DistroVars.etc_grub` to `GrubFile`. `pytest -q` — 178 passed.
 - Validator probe (M1–M2): an unquoted `GRUB_CMDLINE_LINUX='rd.luks.uuid=abc rd.lvm.vg=test'` now warns while the double- and single-quoted forms and `foo="a b"` do not; `GRUB_DISTRIBUTOR` warns for ABSENT, COMMENT, `''`, `'""'` and whitespace-only, and does not warn for a plain name or a `$(...)`/backtick command. Enum ordering probes show a warning only on the parameter whose value is actually invalid. `EXPERT_EDIT` is a `str`, `has_edit_regex(EXPERT_EDIT)` is `False`, and an adopted `GrubFile` parameter carries the string sentinel. `pytest -q` — 151 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.
 

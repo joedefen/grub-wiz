@@ -30,10 +30,12 @@ from types import SimpleNamespace
 from pathlib import Path
 try:
     from .CannedConfig import CannedConfig
+    from .DistroVars import DEFAULT_ETC_GRUB
     from .ParamDiscovery import ParamDiscovery
     from .UserConfigDir import UserConfigDir
 except Exception:
     from CannedConfig import CannedConfig
+    from DistroVars import DEFAULT_ETC_GRUB
     from ParamDiscovery import ParamDiscovery
     from UserConfigDir import UserConfigDir
 
@@ -47,7 +49,9 @@ class GrubFile:
     """
     COMMENT = '∎' # "value" of comment lines
     ABSENT = '≡' # "value" of absent lines
-    std_location = '/etc/default/grub'
+    # Keep a single source of truth for the fallback path (audit M10);
+    # ``DistroVars.etc_grub`` is the value the application actually uses.
+    std_location = DEFAULT_ETC_GRUB
 
     def __init__(self,  supported_params: Dict[str, Any], file_path: Optional[str]=None):
         """
@@ -358,10 +362,15 @@ class GrubFile:
 
             data = self.param_data[param]
             new_value = data.new_value
-            if new_value is None:
+            if new_value is None or new_value == self.ABSENT:
+                # ABSENT means "no line for this parameter".  If a caller
+                # assigns it to a parameter that *does* have a line, the state
+                # is inconsistent; leaving the line untouched is the only safe
+                # action.  This must not be an ``assert``: assertions vanish
+                # under ``python -O``, and writing the sentinel would corrupt
+                # the config (audit M9).
                 new_lines.append(('=', line))  # unchanged supported param
                 continue
-            assert new_value != self.ABSENT # should not happen
             if new_value == self.COMMENT:
                 # Don't write commented lines for originally absent params
                 if data.value == self.ABSENT:
@@ -382,7 +391,9 @@ class GrubFile:
             if data.value == self.ABSENT:
                 new_value = data.new_value
 
-                if new_value is None or new_value == self.COMMENT:
+                # COMMENT means "stay absent"; ABSENT is the absence sentinel
+                # itself and must never be written literally (audit M9).
+                if new_value is None or new_value in (self.COMMENT, self.ABSENT):
                     continue
 
                 # Have a parameter formerly ABSENT now with legal value

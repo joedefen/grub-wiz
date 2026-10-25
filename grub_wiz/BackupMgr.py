@@ -9,11 +9,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Union
 
+from .DistroVars import DEFAULT_ETC_GRUB
 from .UserConfigDir import UserConfigDir
 
 # --- Constants ---
 
-GRUB_DEFAULT_PATH = Path("/etc/default/grub")
+# Derived from the single canonical constant (audit M10).  The application
+# passes ``DistroVars.etc_grub`` explicitly so a distro override is honoured.
+GRUB_DEFAULT_PATH = Path(DEFAULT_ETC_GRUB)
 USER_CONFIG = UserConfigDir.get_singleton("grub-wiz")
 GRUB_CONFIG_DIR = USER_CONFIG.user_state_dir
 
@@ -31,7 +34,8 @@ class BackupMgr:
     """
 
     def __init__(self, target_path: Path = GRUB_DEFAULT_PATH, user_config=None):
-        self.target_path = target_path
+        # Accept str for convenience; every method operates on a Path.
+        self.target_path = Path(target_path)
 
         # Use provided user_config or get singleton
         self.user_config = user_config if user_config else USER_CONFIG

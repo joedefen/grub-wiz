@@ -206,7 +206,8 @@ def test_reinit_runs_discovery_before_filtering(monkeypatch):
             },
         },
     })
-    gw.distro_vars = SimpleNamespace(update_initramfs=None, grub_cfg='')
+    gw.distro_vars = SimpleNamespace(
+        update_initramfs=None, grub_cfg='', etc_grub='/etc/default/grub')
     gw.param_discovery = discovery
     gw.wiz_validator = FakeValidator()
     gw.refresh_backup_list = lambda: None

@@ -375,7 +375,9 @@ Security & Advanced:
       \n%ENUMS%"
 
   GRUB_TERMINAL:
-    default: '#comment'
+    # A writable default: activating an absent parameter writes this value
+    # verbatim.  '#comment' is a documentation sentinel, not a GRUB value.
+    default: console
     edit_re:
     enums:
       console: Text-mode terminal (no graphics).

@@ -10,6 +10,13 @@ import os
 import shutil
 import sys
 
+#: Canonical location of the GRUB defaults file.  Every module that needs a
+#: fallback path derives it from this constant (or from ``DistroVars.etc_grub``
+#: when a distro overrides it), so the path is not hardcoded in several places
+#: (audit M10).
+DEFAULT_ETC_GRUB = '/etc/default/grub'
+
+
 class DistroVars:
     """
     Manages distribution-specific GRUB paths and commands.
@@ -39,7 +46,7 @@ class DistroVars:
                                  'mkinitcpio',
                                  'mkinitfs',
                                  'genkernel'],
-            'etc_grub': ['/etc/default/grub']
+            'etc_grub': [DEFAULT_ETC_GRUB]
         },
         '_update_initramfs_triggers_': {}
     }

@@ -19,6 +19,7 @@ import re
 import unicodedata
 import curses as cs
 from argparse import ArgumentParser
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
@@ -27,7 +28,7 @@ from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
 from .GrubCfgParser import entries_to_enums, get_top_level_grub_entries
-from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
+from .BackupMgr import BackupMgr
 from .WarnDB import WarnDB
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
@@ -1190,7 +1191,10 @@ class GrubWiz:
         self.prev_values = None
         self.param_name_wid = 0
         self.menu_entries = None
-        self.backup_mgr = BackupMgr()
+        # Read and write the same file that DistroVars resolved from YAML; a
+        # future distro override must not make reads and commits diverge
+        # (audit M10).
+        self.backup_mgr = BackupMgr(target_path=Path(self.distro_vars.etc_grub))
         self.warn_db = None
         self.grub_writer = GrubWriter(distro_vars=self.distro_vars)
         self.param_discovery = ParamDiscovery.get_singleton()
@@ -1267,7 +1271,8 @@ class GrubWiz:
             self.wiz_validator = WizValidator(self.param_cfg,
                                               initramfs_tool=initramfs_tool)
 
-        self.grub_file = GrubFile(supported_params=self.param_cfg)
+        self.grub_file = GrubFile(supported_params=self.param_cfg,
+                                  file_path=self.distro_vars.etc_grub)
         self.grub_file.read_file()
         if self.grub_file.extra_params:
             section_name = 'Unvalidated Params'
@@ -1572,13 +1577,35 @@ class GrubWiz:
             return False
         return True # or False is better?
 
+    #: Config ``default`` values that are documentation sentinels rather than
+    #: writable values.  ``GRUB_TERMINAL`` historically shipped
+    #: ``default: '#comment'``; activating it used to write the invalid
+    #: ``GRUB_TERMINAL=#comment`` (audit M9).
+    _NON_WRITABLE_DEFAULTS = ('#comment', '#absent',
+                              GrubFile.COMMENT, GrubFile.ABSENT)
+
+    def _activation_default(self, param_name):
+        """Return a writable value for activating ``param_name``.
+
+        A config ``default`` may be a documentation sentinel.  Such a value
+        must never be written verbatim after ``PARAM=`` (an unquoted ``#``
+        starts a shell comment, and the sentinels are not GRUB values).  Fall
+        back to the first enum when one exists, otherwise to the empty string.
+        """
+        cfg = self.param_cfg.get(param_name, {})
+        default = cfg.get('default', '')
+        if default is None or default in self._NON_WRITABLE_DEFAULTS:
+            enums = cfg.get('enums') or {}
+            default = next(iter(enums), '')
+        return default
+
     def activate_param(self, param_name):
         """ TBD """
         value = self.param_values.get(param_name, None)
         if value in (GrubFile.COMMENT, GrubFile.ABSENT):
             value = self.saved_active_param_values.get(param_name, None)
             if value is None:
-                value = self.param_cfg[param_name].get('default', '')
+                value = self._activation_default(param_name)
             self.param_values[param_name] = value
             return True
         return False # or False is better?
@@ -1777,13 +1804,14 @@ class GrubWiz:
             - offer to install any uniq backup
         """
         self.refresh_backup_list()
-        checksum = self.backup_mgr.calc_checksum(GRUB_DEFAULT_PATH)
+        target = self.backup_mgr.target_path
+        checksum = self.backup_mgr.calc_checksum(target)
         if not self.backups:
             self.backup_mgr.create_backup('orig')
             self.refresh_backup_list()
 
         elif checksum not in self.backups:
-            answer = self.request_backup_tag(f'Enter a tag to back up {GRUB_DEFAULT_PATH}')
+            answer = self.request_backup_tag(f'Enter a tag to back up {target}')
             if answer:
                 self.backup_mgr.create_backup(answer)
                 self.refresh_backup_list()
