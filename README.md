@@ -240,13 +240,14 @@ Notes:
 
 ---
 #### Parameter Discovery and Excluded Parameters
-Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens so that you do not add it from the confusion. Notes:
+Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens so that you do not add it from the confusion. Discovery runs automatically at startup whenever the cache is missing (for example on a fresh install) or older than one week, so the filtering is never decided by a missing or stale cache. Notes:
 - We recommend installing GRUB documentation for best results:
     - Ubuntu/Debian: `sudo apt install grub-doc`
     - Fedora/RHEL: `sudo dnf install grub2-common`
 - If `info` provides inaccurate results, you can disable discovery:
     - `grub-wiz --discovery=disable` (use "enable" or "show" for other actions)
 - Discovery results are cached machine-wide in `/var/lib/grub-wiz/system-params.yaml`
+- If discovery fails because the documentation is not installed, `grub-wiz` keeps all parameters visible and retries on the next start. Installing `grub-doc` and restarting (or running `python -m grub_wiz.ParamDiscovery --regenerate`) refreshes the cache.
 
 
 `grub-wiz` focuses on common configuration tasks. You may have specialized needs such as:

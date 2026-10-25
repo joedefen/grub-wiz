@@ -705,16 +705,23 @@ class RestoreScreen(GrubWizScreen):
         """Handle 'r' key on RESTORE screen - restore selected backup"""
         gw = self.gw
         idx = self.win.pick_pos
-        if 0 <= idx < len(gw.ordered_backup_pairs):
-            key = gw.ordered_backup_pairs[idx][0]
-            target = gw.ordered_backup_pairs[idx][1]
-            if gw.really_wanna(f'restore {target.name!r}'):
-                gw.backup_mgr.restore_backup(gw.backups[key])
-                while gw.navigate_back():
-                    pass
-                gw.reinit_gw()
-                gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
-                gw.do_start_up_backup()
+        if not 0 <= idx < len(gw.ordered_backup_pairs):
+            return
+        key = gw.ordered_backup_pairs[idx][0]
+        target = gw.ordered_backup_pairs[idx][1]
+        if not gw.really_wanna(f'restore {target.name!r}'):
+            return
+        # Only reinitialize when the file really was replaced.  A failed
+        # restore leaves /etc/default/grub untouched, so rebuilding the
+        # screens from it would silently discard the user's state for nothing.
+        if not gw.backup_mgr.restore_backup(gw.backups[key]):
+            self.win.alert(message=f'ERR: restore of {target.name!r} failed')
+            return
+        while gw.navigate_back():
+            pass
+        gw.reinit_gw()
+        gw.reset_screen_stack()
+        gw.do_start_up_backup()
 
     def delete_ACTION(self):
         """Handle 'd' key on RESTORE screen - delete selected backup"""
@@ -1064,6 +1071,23 @@ class GrubWiz:
         self.screens = []
         self.reinit_gw()
 
+    def reset_screen_stack(self):
+        """Rebuild the screen stack after /etc/default/grub is replaced.
+
+        ``OptionSpinner`` keeps a direct reference to the ``ScreenStack`` it
+        was constructed with and uses it for every action-scoping and
+        navigation decision.  Replacing ``self.ss`` therefore requires
+        rebinding the spinner too; otherwise it keeps consulting the stale
+        stack (and its dead ``curr``/``stack`` state).
+        """
+        self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
+        if self.spinner is not None:
+            self.spinner.stack = self.ss
+            # Keep the spinner's option object and the stack's obj in sync;
+            # OptionSpinner.default_obj's setter does the same when a stack
+            # is present, but the assignment above bypasses it.
+            self.ss.obj = self.spinner.default_obj
+
     def reinit_gw(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
         self.param_cfg = {}
@@ -1077,6 +1101,13 @@ class GrubWiz:
         for section_name in section_names:
             if section_name.startswith('_'):
                 del self.sections[section_name]
+
+        # Refresh the machine-wide discovery cache before filtering.  On a
+        # fresh install this runs ``info grub`` for the first time; afterwards
+        # it re-runs only when the cache is missing or older than a week.  The
+        # UI therefore never filters (or fails to filter) based on an absent
+        # or stale cache (audit H7).
+        self.param_discovery.ensure_discovered()
 
         names = []
         for params in self.sections.values():
@@ -1765,7 +1796,7 @@ class GrubWiz:
             self.win.start_curses()
             if ok:
                 self.reinit_gw()
-                self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
+                self.reset_screen_stack()
                 self.do_start_up_backup()
 
     def find_in(self, value, enums=None, cfg=None):

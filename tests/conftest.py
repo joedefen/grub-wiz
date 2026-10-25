@@ -24,6 +24,8 @@ def isolated_param_discovery(monkeypatch):
         # No parameter is considered absent on the test host.
         get_absent=lambda _params: set(),
         manual_enable=lambda _state=None: True,
+        # Startup refreshes the discovery cache; tests must not shell out.
+        ensure_discovered=lambda: set(),
     )
     monkeypatch.setattr(
         ParamDiscovery,

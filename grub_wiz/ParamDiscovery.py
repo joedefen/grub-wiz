@@ -59,10 +59,13 @@ class ParamDiscovery:
         self._legacy_cache_file = self.user_config.user_state_dir / 'system-params.yaml'
         self.cached_data = None
         self._manual_disabled = False
+        # ``ensure_discovered()`` (the application startup hook) runs at most
+        # one discovery attempt per process; see its docstring.
+        self._ensure_attempted = False
 
         # all member vars inited ... do dynamic init...
         self.cached_data = self.load_cached_data()
-        self._manual_disabled = self.cached_data['manual_disabled'] if self.cached_data else False        
+        self._manual_disabled = self.cached_data['manual_disabled'] if self.cached_data else False
 
     @staticmethod
     def get_singleton():
@@ -187,6 +190,17 @@ class ParamDiscovery:
         self.user_config.atomic_root_write(
             self.cache_file, stream.getvalue(), mode=0o600)
 
+        # Keep the in-memory view in sync with the file just written.  Without
+        # this, load_cached_data() keeps returning the pre-discovery snapshot
+        # for the rest of the process, so a forced regeneration (or the
+        # startup refresh added for H7) would be ignored by get_absent().
+        self.cached_data = {
+            'params': set(params),
+            'state': state,
+            'timestamp': current_time,
+            'manual_disabled': self._manual_disabled,
+        }
+
     def load_cached_data(self) -> Optional[dict]:
         """
         Load cached discovery data including params, status, and manual_disabled flag.
@@ -267,6 +281,30 @@ class ParamDiscovery:
 
         # Unknown state, play it safe and regenerate
         return True
+
+    def ensure_discovered(self) -> Set[str]:
+        """Refresh the discovery cache once per process, if missing or stale.
+
+        This is the entry point the application calls before it filters the
+        parameter list, so filtering is never decided by a cache that does not
+        exist yet (fresh install) or by one that has aged past its refresh
+        interval.  ``get_system_params()`` still performs the actual refresh
+        and remains available for explicit ``--regenerate`` runs.
+
+        A failed attempt (no GRUB docs, unparsable output) is not retried on
+        every re-initialization; restarting the application or running
+        ``python -m grub_wiz.ParamDiscovery --regenerate`` retries it.
+
+        Returns:
+            Set of parameter names supported on this system (empty when
+            discovery is disabled or produced no usable result)
+        """
+        if self._ensure_attempted:
+            cached_data = self.load_cached_data()
+            return cached_data['params'] if cached_data else set()
+
+        self._ensure_attempted = True
+        return self.get_system_params()
 
     def get_system_params(self, force_regenerate: bool = False) -> Set[str]:
         """
@@ -387,6 +425,10 @@ class ParamDiscovery:
         - Less than 20% of params are absent (validates probe quality)
           ONLY IF the given number of probes is > 1 (so you can do single
           param probes w/o being dismissed for being incomplete)
+
+        The application calls ``ensure_discovered()`` before it relies on this
+        method, so the cache is populated or refreshed at startup rather than
+        only when this module is run as a CLI.
 
         Args:
             param_list: List of parameter names to check

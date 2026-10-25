@@ -31,7 +31,9 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | H2 | ✅ | `probe_disk_layout()` reads lowercase keys, walks flat and nested `lsblk` trees, skips `loop`/`rom`, counts only NTFS/exFAT and Microsoft partition GUIDs on non-removable media, and dedupes `efibootmgr` entries by `\EFI\<dir>`. [`tests/test_disk_layout.py`](test_disk_layout.py) covers 16 cases. |
 | H3 | ✅ | [`getvals()`](../grub_wiz/WizValidator.py:263) resolves each key independently, [`sh()`](../grub_wiz/WizValidator.py:251) is `None`-safe with fallback names, companion-parameter rules require the companion to be active, and the enum loop resets `bad` per parameter. [`tests/test_validator_rules.py`](test_validator_rules.py:802) covers the audit reproduction and five related paths. |
 | H5 | ✅ | The COMPARE screen no longer merges `extra_params` config dicts into `param_data`; `GrubFile` already registers a `SimpleNamespace` record per unvalidated parameter. `GrubFile` also works on a copy of the caller's config so reading a backup cannot adopt its extra params into `gw.param_cfg`. [`tests/test_compare_screen.py`](test_compare_screen.py) renders backups that contain unvalidated parameters. |
-| H4, H6–H8 | ☐ | Unchanged. |
+| H6 | ✅ | [`reset_screen_stack()`](../grub_wiz/main.py:1074) rebuilds `gw.ss` and rebinds `spinner.stack` (and `stack.obj`) to it; restore and write both use it. Restore now checks `restore_backup()`'s return value and alerts without reinitializing on failure. [`tests/test_restore_stack.py`](test_restore_stack.py) covers the rebind and both restore outcomes. |
+| H7 | ✅ | [`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1091) now calls [`ensure_discovered()`](../grub_wiz/ParamDiscovery.py:285) before filtering, so discovery runs at startup on a fresh install and whenever the cache is stale. [`save_params()`](../grub_wiz/ParamDiscovery.py:162) now refreshes the in-memory cache so the regenerated result is what `get_absent()` sees. [`tests/test_param_discovery.py`](test_param_discovery.py) covers fresh install, stale-cache refresh, once-per-process retry, and the `reinit_gw()` wiring. |
+| H4, H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
 | M1–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
@@ -190,11 +192,20 @@ Any backup containing an unvalidated `GRUB_*` parameter (explicitly supported an
 
 ### H6. Restore/write replaces the screen stack but leaves the spinner bound to the old stack
 
-`OptionSpinner` stores the stack it was constructed with (`self.stack`). After a restore, [`restore_ACTION()`](../grub_wiz/main.py:661) replaces `gw.ss` at [`main.py:673`](../grub_wiz/main.py:673); after a successful write, [`update_grub()`](../grub_wiz/main.py:1602) does the same at [`main.py:1716`](../grub_wiz/main.py:1716). Neither updates `self.spinner.stack`. Action scoping and navigation checks in the spinner continue to consult the stale stack, so behavior after restore/write can be inconsistent or wrong. Also, [`restore_backup()`](../grub_wiz/BackupMgr.py:74) returns `False` on failure, but [`restore_ACTION()`](../grub_wiz/main.py:669) ignores the return value and proceeds to reinitialize anyway.
+`OptionSpinner` stores the stack it was constructed with (`self.stack`). After a restore, [`restore_ACTION()`](../grub_wiz/main.py:704) replaced `gw.ss`; after a successful write, [`update_grub()`](../grub_wiz/main.py:1677) did the same. Neither updated `self.spinner.stack`, so action scoping and navigation checks continued to consult the stale stack. Also, [`restore_backup()`](../grub_wiz/BackupMgr.py:77) returns `False` on failure, but [`restore_ACTION()`](../grub_wiz/main.py:704) ignored the return value and reinitialized anyway.
 
-### H7. Parameter discovery is never run by the application
+**Remediation:** both paths now call [`reset_screen_stack()`](../grub_wiz/main.py:1074), which builds the replacement stack and rebinds `spinner.stack` to it (also syncing `stack.obj` with `spinner.default_obj`). [`restore_ACTION()`](../grub_wiz/main.py:704) checks the `restore_backup()` result and, on failure, shows an alert and leaves the current screens untouched. [`tests/test_restore_stack.py`](test_restore_stack.py) asserts the rebind and both restore outcomes.
 
-The README says parameters not present on the system are automatically removed. In practice, [`get_system_params()`](../grub_wiz/ParamDiscovery.py:254) is called only from the module’s own CLI at [`ParamDiscovery.py:450`](../grub_wiz/ParamDiscovery.py:450). The application only calls [`get_absent()`](../grub_wiz/ParamDiscovery.py:363), which reads an existing cache and returns an empty set if no cache exists. On a fresh install, discovery never runs, so no parameters are filtered. On later runs, results come from a possibly stale cache.
+### H7. Parameter discovery is never run by the application — ✅ FIXED
+
+The README says parameters not present on the system are automatically removed. In practice, [`get_system_params()`](../grub_wiz/ParamDiscovery.py:307) was called only from the module’s own CLI. The application only called [`get_absent()`](../grub_wiz/ParamDiscovery.py:394), which reads an existing cache and returns an empty set if no cache exists. On a fresh install, discovery never ran, so no parameters were filtered. On later runs, results came from a possibly stale cache.
+
+**Remediation:** [`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1091) calls [`ensure_discovered()`](../grub_wiz/ParamDiscovery.py:285) before it builds the filtered parameter set. That method runs [`get_system_params()`](../grub_wiz/ParamDiscovery.py:307) exactly once per process; `get_system_params()` itself uses the cache when it is fresh and re-runs `info grub` when the cache is missing, older than a week, or in `NO_INFO` state. A failed discovery is not retried on every restore/write within the same process; restarting the application retries it. Two supporting fixes make the startup result authoritative:
+
+- [`save_params()`](../grub_wiz/ParamDiscovery.py:162) now updates `self.cached_data` after the atomic write. Previously it only wrote the file, so `load_cached_data()` kept returning the pre-discovery snapshot and [`get_absent()`](../grub_wiz/ParamDiscovery.py:394) would ignore the fresh result (this was M12).
+- The README now states that discovery runs automatically at startup when the cache is missing or stale, and that a missing-docs failure leaves all parameters visible until the next start.
+
+Regression coverage is in [`tests/test_param_discovery.py`](test_param_discovery.py): a fresh install triggers discovery and feeds `get_absent()`, a stale `OK` cache is refreshed before filtering, a `NO_INFO` attempt is not repeated within one process, and `reinit_gw()` calls discovery before it removes unsupported parameters. `pytest -q` passes (74 tests).
 
 ### H8. Destructive prompts default to “yes”
 
@@ -354,7 +365,7 @@ The tests pass (`20 passed`) but:
 8. Repair the custom-config schema and validation workflow, including underscore sections and `edit_re_human` (H4).
 9. Fix the extra-params merge in the compare screen (H5).
 10. Keep `spinner.stack` in sync when replacing `ScreenStack`; check restore return values (H6).
-11. Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
+11. ✅ Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
 12. Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
 13. Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
 14. Run `update-grub` after restore or clearly document the two-step behavior; check restore success (M15).
@@ -393,4 +404,5 @@ The tests pass (`20 passed`) but:
 - Disk-layout probe (H2): the host previously probed as `has_another_os=False, is_luks_active=False, is_lvm_active=False`; it now reports `has_another_os=True, is_luks_active=True, is_lvm_active=False`, matching its `crypto_LUKS` partitions, Microsoft basic-data partition, and separate Kubuntu/Debian boot entries. [`tests/test_disk_layout.py`](test_disk_layout.py) feeds canned `lsblk`/`efibootmgr` output so the results do not depend on the host.
 - `pytest -q` — 49 passed.
 - Custom-config probe (H4): the packaged `canned_config.yaml` now passes `validate_schema()` unchanged, and an exact copy in a temporary user-config directory is selected as `using_path` with `edit_re` resolved against `_re_specs_` and `_distro_vars_` intact. [`tests/test_canned_config.py`](test_canned_config.py) also covers reserved metadata sections, runtime-only `edit_re_human`, malformed sections, and fallback to the packaged template. `pytest -q` — 64 passed.
+- Discovery probe (H7): [`tests/test_param_discovery.py`](test_param_discovery.py) injects a fake state directory and a fake `discover_params()`. It verifies that a missing cache is discovered on the first `ensure_discovered()`, that a one-week-old `OK` cache is regenerated and the regenerated set—not the stale in-memory snapshot—drives `get_absent()`, that a `NO_INFO` attempt is not repeated within a process, and that `GrubWiz.reinit_gw()` calls discovery before it drops unsupported parameters. `pytest -q` — 74 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.
