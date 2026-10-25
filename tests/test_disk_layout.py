@@ -209,6 +209,67 @@ def test_duplicate_loaders_for_one_os_are_not_multiboot(run_lsblk):
     assert probe().has_another_os is False
 
 
+def test_root_on_luks_is_flagged(run_lsblk):
+    """The LUKS container is an ancestor of the filesystem mounted at /."""
+    run_lsblk({'blockdevices': [
+        {'name': 'nvme0n1', 'fstype': None, 'parttype': None, 'children': [
+            {'name': 'nvme0n1p3', 'fstype': 'crypto_LUKS', 'parttype': None,
+             'children': [
+                 {'name': 'cryptroot', 'fstype': 'btrfs', 'parttype': None,
+                  'mountpoints': ['/']},
+             ]},
+            {'name': 'nvme0n1p5', 'fstype': 'crypto_LUKS', 'parttype': None,
+             'mountpoints': [None]},
+        ]},
+    ]})
+
+    layout = probe()
+
+    assert layout.is_luks_active is True
+    assert layout.root_is_luks is True
+    assert layout.root_is_lvm is False
+
+
+def test_luks_data_disk_is_not_root(run_lsblk):
+    """An encrypted data disk elsewhere must not imply rd.luks.uuid is needed."""
+    run_lsblk({'blockdevices': [
+        {'name': 'sda', 'fstype': None, 'parttype': None, 'children': [
+            {'name': 'sda1', 'fstype': 'crypto_LUKS', 'parttype': None,
+             'children': [
+                 {'name': 'sda1-luks', 'fstype': 'ext4', 'parttype': None,
+                  'mountpoints': ['/my-win']},
+             ]},
+        ]},
+        {'name': 'nvme0n1', 'fstype': None, 'parttype': None, 'children': [
+            {'name': 'nvme0n1p2', 'fstype': 'btrfs', 'parttype': None,
+             'mountpoints': ['/', '/home']},
+        ]},
+    ]})
+
+    layout = probe()
+
+    assert layout.is_luks_active is True
+    assert layout.root_is_luks is False
+
+
+def test_root_on_lvm_is_flagged(run_lsblk):
+    run_lsblk({'blockdevices': [
+        {'name': 'sda', 'fstype': None, 'parttype': None, 'children': [
+            {'name': 'sda2', 'fstype': 'LVM2_member', 'parttype': None,
+             'children': [
+                 {'name': 'vg-root', 'fstype': 'ext4', 'parttype': None,
+                  'mountpoints': ['/']},
+             ]},
+        ]},
+    ]})
+
+    layout = probe()
+
+    assert layout.is_lvm_active is True
+    assert layout.root_is_lvm is True
+    assert layout.root_is_luks is False
+
+
 def test_missing_lsblk_yields_all_false(monkeypatch):
     def raise_missing(*_args, **_kwargs):
         raise FileNotFoundError('lsblk')

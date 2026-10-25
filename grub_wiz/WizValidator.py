@@ -28,11 +28,16 @@ class WizValidator:
     LUKS_FSTYPES = ('crypto_luks', 'crypto_luks2')
     LVM_FSTYPES = ('lvm2_member',)
 
-    def __init__(self, param_cfg):
+    def __init__(self, param_cfg, initramfs_tool: Optional[str] = None):
         # Cache for the disk probe results
         self._disk_layout_cache: Optional[SimpleNamespace] = None
         self.param_cfg = param_cfg
-        # ... other initializations ...
+        # Basename of the initramfs generator (e.g. ``dracut``,
+        # ``update-initramfs``, ``mkinitcpio``).  The ``rd.*`` kernel
+        # arguments only exist on dracut systems; callers that do not pass
+        # this get no ``rd.*`` advice rather than a wrong one.
+        self.initramfs_tool = (os.path.basename(initramfs_tool)
+                               if initramfs_tool else None)
 
     @staticmethod
     def _walk_block_devices(devices):
@@ -42,15 +47,55 @@ class WizValidator:
         but a flat list is also possible (containers, ZFS, loop/rom devices,
         single-partition hosts), so both shapes must be handled.
         """
-        stack = list(devices)
+        for device, _ancestors in WizValidator._walk_block_devices_with_ancestors(devices):
+            yield device
+
+    @staticmethod
+    def _walk_block_devices_with_ancestors(devices):
+        """Yield ``(device, ancestors)`` pairs from an ``lsblk -J`` tree.
+
+        ``ancestors`` runs from the outermost disk down to the device's
+        parent, so a mounted filesystem can be checked for the LUKS/LVM
+        layers it sits on.
+        """
+        stack = [(device, ()) for device in devices]
         while stack:
-            device = stack.pop()
+            device, ancestors = stack.pop()
             if not isinstance(device, dict):
                 continue
-            yield device
+            yield device, ancestors
             children = device.get('children')
             if isinstance(children, list):
-                stack.extend(children)
+                stack.extend((child, ancestors + (device,))
+                             for child in children)
+
+    @staticmethod
+    def _mountpoints(device):
+        """Return the mountpoints lsblk reported for one device node.
+
+        util-linux >= 2.37 emits ``mountpoints`` (a list, because btrfs
+        subvolumes can be mounted several times); older versions emit the
+        singular ``mountpoint`` string.
+        """
+        mounts = device.get('mountpoints')
+        if mounts is None:
+            mounts = device.get('mountpoint')
+        if isinstance(mounts, str):
+            mounts = [mounts]
+        elif not isinstance(mounts, list):
+            mounts = []
+        return [mount for mount in mounts if isinstance(mount, str) and mount]
+
+    @classmethod
+    def _is_luks(cls, device):
+        """True when this node is a LUKS container."""
+        return str(device.get('fstype') or '').lower() in cls.LUKS_FSTYPES
+
+    @classmethod
+    def _is_lvm(cls, device):
+        """True when this node is an LVM physical volume."""
+        return (str(device.get('fstype') or '').lower() in cls.LVM_FSTYPES
+                or str(device.get('parttype') or '').lower() == cls.GPT_LINUX_LVM)
 
     def probe_disk_layout(self) -> SimpleNamespace:
         """
@@ -58,7 +103,10 @@ class WizValidator:
         The result is cached to ensure the subprocess is run only once.
 
         Returns:
-            SimpleNamespace(has_another_os: bool, is_luks_active: bool, is_lvm_active: bool)
+            SimpleNamespace with ``has_another_os``, ``is_luks_active`` and
+            ``is_lvm_active`` (any device on the machine) plus
+            ``root_is_luks`` and ``root_is_lvm`` (only when the filesystem
+            mounted at ``/`` sits on that layer).
         """
         # 1. Check Cache
         if self._disk_layout_cache is not None:
@@ -68,20 +116,32 @@ class WizValidator:
         result = SimpleNamespace(
             has_another_os=False,
             is_luks_active=False,
-            is_lvm_active=False
+            is_lvm_active=False,
+            # True only when the *root* filesystem sits on that layer.
+            # A LUKS/LVM data disk needs no boot-time kernel argument.
+            root_is_luks=False,
+            root_is_lvm=False,
         )
 
         # lsblk is fast and outputs in JSON format.  The JSON keys are always
         # lowercase ("fstype", "parttype", "rm", "type") even though the -o
         # column names are conventionally written in uppercase.
-        cmd = ['lsblk', '-o', 'FSTYPE,PARTTYPE,RM,TYPE', '-J']
+        # MOUNTPOINTS exists in util-linux >= 2.37; fall back to the singular
+        # column so older distros still get root-chain detection.
         try:
             process = subprocess.run(
-                cmd,
+                ['lsblk', '-o', 'FSTYPE,PARTTYPE,RM,TYPE,MOUNTPOINTS', '-J'],
                 capture_output=True,
                 text=True,
                 check=False
             )
+            if process.returncode != 0:
+                process = subprocess.run(
+                    ['lsblk', '-o', 'FSTYPE,PARTTYPE,RM,TYPE,MOUNTPOINT', '-J'],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
 
             if process.returncode != 0:
                 # If lsblk fails (e.g., permissions), return the default 'False' result
@@ -91,7 +151,8 @@ class WizValidator:
             data = json.loads(process.stdout)
 
             # 3. Scan every block device, flat or nested
-            for device in self._walk_block_devices(data.get('blockdevices', [])):
+            for device, ancestors in self._walk_block_devices_with_ancestors(
+                    data.get('blockdevices', [])):
                 fstype = str(device.get('fstype') or '').lower()
                 parttype = str(device.get('parttype') or '').lower()
                 device_type = str(device.get('type') or '').lower()
@@ -119,6 +180,15 @@ class WizValidator:
                 # LVM Check (FSTYPE or PARTTYPE)
                 if fstype in self.LVM_FSTYPES or parttype == self.GPT_LINUX_LVM:
                     result.is_lvm_active = True
+
+                # --- C. Root filesystem backing (for rd.* validation) ---
+                # Only the root chain needs a boot-time rd.luks.uuid /
+                # rd.lvm.vg; a LUKS or LVM data disk elsewhere does not.
+                if '/' in self._mountpoints(device):
+                    result.root_is_luks = result.root_is_luks or any(
+                        self._is_luks(node) for node in ancestors)
+                    result.root_is_lvm = result.root_is_lvm or any(
+                        self._is_lvm(node) for node in ancestors)
 
         except (FileNotFoundError, json.JSONDecodeError):
             # If lsblk is missing or JSON output is bad, the default 'False' result will be cached.
@@ -309,15 +379,29 @@ class WizValidator:
         hey_if(bad, p2, 3,
                f'splash/quiet/rhgb belong only in {sh(p1, "GRUB_CMDLINE_LINUX_DEFAULT")}')
 
-        # LUKS active but no rd.luks.uuid in GRUB_CMDLINE_LINUX
-        p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and layout.is_luks_active and 'rd.luks.uuid=' not in avi(v1)
-        hey_if(bad, p1, 3, 'no "rd.luks.uuid=" but LUKS seems active')
+        # ``rd.luks.uuid=`` / ``rd.lvm.vg=`` are dracut's interface.  Debian
+        # and Ubuntu unlock through /etc/crypttab (initramfs-tools) and Arch
+        # uses ``cryptdevice=`` (mkinitcpio), so their absence is normal on
+        # those systems.  Even on dracut the argument is only needed when the
+        # root filesystem itself is encrypted; an encrypted data disk needs
+        # nothing at boot.  Both cmdline variables are read because dracut
+        # consumes the merged /proc/cmdline.
+        uses_dracut = self.initramfs_tool == 'dracut'
+        p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX',
+                                 'GRUB_CMDLINE_LINUX_DEFAULT')
+        boot_args = f'{avi(v1)} {avi(v2)}'
 
-        # LVM active but no rd.lvm.vg in GRUB_CMDLINE_LINUX
-        p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and layout.is_lvm_active and 'rd.lvm.vg=' not in avi(v1)
-        hey_if(bad, p1, 3, 'no "rd.lvm.vg=" but LVM seems active')
+        bad = (bool(p1) and uses_dracut
+               and getattr(layout, 'root_is_luks', False)
+               and 'rd.luks.uuid=' not in boot_args)
+        hey_if(bad, p1, 3,
+               'root is on LUKS but no "rd.luks.uuid=" (dracut needs it)')
+
+        bad = (bool(p1) and uses_dracut
+               and getattr(layout, 'root_is_lvm', False)
+               and 'rd.lvm.vg=' not in boot_args)
+        hey_if(bad, p1, 3,
+               'root is on LVM but no "rd.lvm.vg=" (dracut needs it)')
 
         # ENABLE_CRYPTODISK without LUKS
         p1, v1 = getvals('GRUB_ENABLE_CRYPTODISK')

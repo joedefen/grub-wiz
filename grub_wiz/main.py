@@ -16,6 +16,7 @@ import time
 import textwrap
 import traceback
 import re
+import unicodedata
 import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
@@ -75,6 +76,43 @@ class Tab:
         self.rz = self.cols
         self.rwid = self.rz - self.ra
         self.wid = self.rz - self.la
+
+
+def display_width(text):
+    """Return the terminal cell width of *text*.
+
+    Emoji and other East-Asian wide characters occupy two cells, while
+    combining marks occupy none.  ``len()`` is therefore only correct for
+    ASCII, and using it to pad a field silently misaligns everything after
+    the first wide glyph (which is exactly what the warning stars are).
+    """
+    width = 0
+    for char in str(text):
+        if unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+    return width
+
+
+def truncate_to_width(text, width, ellipsis='▶'):
+    """Truncate *text* so its terminal cell width does not exceed *width*."""
+    text = str(text)
+    if display_width(text) <= width:
+        return text
+    budget = width - display_width(ellipsis)
+    used, kept = 0, []
+    for char in text:
+        if unicodedata.combining(char):
+            char_width = 0
+        elif unicodedata.east_asian_width(char) in ('W', 'F'):
+            char_width = 2
+        else:
+            char_width = 1
+        if used + char_width > budget:
+            break
+        kept.append(char)
+        used += char_width
+    return ''.join(kept) + ellipsis
 
 
 # Note: Clue class has been replaced with Context from ConsoleWindow
@@ -167,11 +205,11 @@ class HomeScreen(GrubWizScreen):
         indent = len(line)
         line += f'  {value}'
         wid = self.win.cols - 1 # effective width
-        if len(line) > wid and is_current:
+        if display_width(line) > wid and is_current:
             line = textwrap.fill(line, width=wid,
                        subsequent_indent=' '*indent)
-        elif len(line) > wid and not is_current:
-            line = line [:self.win.cols-2] + '⯈'
+        elif display_width(line) > wid and not is_current:
+            line = truncate_to_width(line, self.win.cols-1, ellipsis='⯈')
         return line.splitlines()
 
 
@@ -521,8 +559,13 @@ class ReviewScreen(HomeScreen):
 
                 if not is_inhibit or gw.show_hidden_warns:
                     mark = '✘' if is_inhibit else ' '
-                    sub_text = f'└─── {mark} {stars:>4}'
-                    line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
+                    # Pad the star field by *cell* width (an emoji star is
+                    # two cells), so the message starts at the same column
+                    # for every severity.
+                    star_field = ' ' * max(8 - display_width(stars), 0) + stars
+                    sub_text = f'└─── {mark} {star_field}'
+                    pad = max(tab.lwid - display_width(sub_text), 0)
+                    line = f'{" " * pad}{sub_text}  {hey[1]}'
                     # Add warning line with Context - TRANSIENT keeps it with parent
                     cnt = gw.add_wrapped_body_line(line, tab.lwid+2,
                                                   self.win.body.row_cnt==picked,
@@ -1045,7 +1088,10 @@ class GrubWiz:
                     self.param_cfg[param_name] = cfg
                     self.param_defaults[param_name] = cfg['default']
         if self.wiz_validator is None:
-            self.wiz_validator = WizValidator(self.param_cfg)
+            initramfs_tool = (os.path.basename(self.distro_vars.update_initramfs)
+                              if self.distro_vars.update_initramfs else None)
+            self.wiz_validator = WizValidator(self.param_cfg,
+                                              initramfs_tool=initramfs_tool)
 
         self.grub_file = GrubFile(supported_params=self.param_cfg)
         self.grub_file.read_file()
@@ -1288,10 +1334,7 @@ class GrubWiz:
 
     def truncate_line(self, line):
         """ TBD """
-        wid = self.win.cols-1
-        if len(line) > wid:
-            line = line[:wid-1] + '▶'
-        return line
+        return truncate_to_width(line, self.win.cols-1)
 
     def add_wrapped_body_line(self, line, indent, is_current, context=None):
         """ TBD """
@@ -1300,7 +1343,10 @@ class GrubWiz:
             return 1
 
         wid = self.win.cols
-        wrapped = textwrap.fill(line, width=wid-1,
+        # textwrap counts code points; subtract the extra cells taken by any
+        # double-width glyphs so a wrapped line cannot overflow the window.
+        excess = display_width(line) - len(line)
+        wrapped = textwrap.fill(line, width=max(wid-1-excess, 1),
                     subsequent_indent=' '*indent)
         wraps = wrapped.split('\n')
         for idx, wrap in enumerate(wraps):

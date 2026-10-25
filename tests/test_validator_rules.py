@@ -56,7 +56,8 @@ class TestHelper:
             'GRUB_VIDEO_BACKEND': {'enums': {'vbe': {}, 'vesa': {}, 'efi_gop': {}, 'efi_uga': {}}},
         }
 
-    def run_test(self, test_name, config, should_warn, expected_param=None, layout=None):
+    def run_test(self, test_name, config, should_warn, expected_param=None, layout=None,
+                 initramfs_tool='dracut'):
         """
         Run a single validation test.
 
@@ -66,8 +67,9 @@ class TestHelper:
             should_warn: True if warnings are expected, False otherwise
             expected_param: If should_warn is True, the parameter expected to have warnings
             layout: Optional mock layout object (for LUKS/LVM/OS tests)
+            initramfs_tool: initramfs generator basename (defaults to dracut)
         """
-        validator = WizValidator(self.param_cfg)
+        validator = WizValidator(self.param_cfg, initramfs_tool=initramfs_tool)
 
         # Never probe the host: default to a plain single-OS layout and let
         # each test case override it.  This keeps the suite hermetic and
@@ -289,11 +291,13 @@ def test_luks_detection():
     passed = 0
     total = 0
 
-    # Mock layout with LUKS active
+    # Mock layout with LUKS on the root device
     layout_with_luks = SimpleNamespace(
         has_another_os=False,
         is_luks_active=True,
-        is_lvm_active=False
+        is_lvm_active=False,
+        root_is_luks=True,
+        root_is_lvm=False,
     )
 
     # Mock layout without LUKS
@@ -337,11 +341,13 @@ def test_lvm_detection():
     passed = 0
     total = 0
 
-    # Mock layout with LVM active
+    # Mock layout with LVM on the root device
     layout_with_lvm = SimpleNamespace(
         has_another_os=False,
         is_luks_active=False,
-        is_lvm_active=True
+        is_lvm_active=True,
+        root_is_luks=False,
+        root_is_lvm=True,
     )
 
     # Mock layout without LVM
@@ -373,6 +379,57 @@ def test_lvm_detection():
     print(f"\nPassed: {passed}/{total}")
 
 
+def test_rd_arg_rules_are_dracut_and_root_scoped():
+    """rd.luks.uuid/rd.lvm.vg are dracut-specific and root-scoped."""
+    print("\n" + "=" * 70)
+    print("TEST: rd.* rules are dracut + root-chain scoped")
+    print("=" * 70)
+
+    helper = TestHelper()
+
+    def layout(root_luks=False, root_lvm=False, any_luks=False, any_lvm=False):
+        return SimpleNamespace(
+            has_another_os=False,
+            is_luks_active=any_luks,
+            is_lvm_active=any_lvm,
+            root_is_luks=root_luks,
+            root_is_lvm=root_lvm,
+        )
+
+    test_cases = [
+        # dracut + root on LUKS + no rd.luks.uuid -> warn
+        ('dracut root LUKS, no rd.luks.uuid (should warn)',
+         {'GRUB_CMDLINE_LINUX': '""'}, True, 'GRUB_CMDLINE_LINUX',
+         layout(root_luks=True, any_luks=True), 'dracut'),
+        # initramfs-tools unlocks through /etc/crypttab, never rd.luks.uuid
+        ('initramfs-tools root LUKS, no rd.luks.uuid (should NOT warn)',
+         {'GRUB_CMDLINE_LINUX': '""'}, False, None,
+         layout(root_luks=True, any_luks=True), 'update-initramfs'),
+        # A LUKS data disk needs nothing at boot
+        ('dracut data-only LUKS, no rd.luks.uuid (should NOT warn)',
+         {'GRUB_CMDLINE_LINUX': '""'}, False, None,
+         layout(any_luks=True), 'dracut'),
+        # dracut consumes the merged command line, so DEFAULT counts
+        ('dracut root LUKS, rd.luks.uuid in DEFAULT (should NOT warn)',
+         {'GRUB_CMDLINE_LINUX': '""',
+          'GRUB_CMDLINE_LINUX_DEFAULT': '"rd.luks.uuid=abc quiet"'},
+         False, None, layout(root_luks=True, any_luks=True), 'dracut'),
+        # LVM follows the same scoping
+        ('dracut root LVM, no rd.lvm.vg (should warn)',
+         {'GRUB_CMDLINE_LINUX': '""'}, True, 'GRUB_CMDLINE_LINUX',
+         layout(root_lvm=True, any_lvm=True), 'dracut'),
+        ('initramfs-tools root LVM, no rd.lvm.vg (should NOT warn)',
+         {'GRUB_CMDLINE_LINUX': '""'}, False, None,
+         layout(root_lvm=True, any_lvm=True), 'update-initramfs'),
+    ]
+
+    for test_name, config, should_warn, expected_param, fake_layout, tool in test_cases:
+        helper.run_test(test_name, config, should_warn, expected_param,
+                        fake_layout, initramfs_tool=tool)
+
+    print(f"\nPassed: {len(test_cases)}/{len(test_cases)}")
+
+
 def test_cryptodisk_without_luks():
     """Test ENABLE_CRYPTODISK without LUKS validation."""
     print("\n" + "=" * 70)
@@ -386,7 +443,9 @@ def test_cryptodisk_without_luks():
     layout_with_luks = SimpleNamespace(
         has_another_os=False,
         is_luks_active=True,
-        is_lvm_active=False
+        is_lvm_active=False,
+        root_is_luks=True,
+        root_is_lvm=False,
     )
 
     layout_no_luks = SimpleNamespace(
