@@ -248,8 +248,12 @@ class WizValidator:
             return value
         def quotes(param): # all forms of simple value in grub config
             return (param, f'"{param}"', f"'{param}'")
-        def sh(param): # "ShortHand": reduce GRUB_TIMEOUT to TIMEOUT
-            return param[5:]
+        def sh(param, fallback=None): # "ShortHand": reduce GRUB_TIMEOUT to TIMEOUT
+            # ``getvals`` yields None for a cross-referenced parameter that is
+            # absent from the active set, so never index a missing name blindly.
+            if isinstance(param, str) and param.startswith('GRUB_'):
+                return param[5:]
+            return fallback if fallback is not None else str(param)
         def hey(param, severity, message):
             nonlocal warns, stars
             if param not in warns:
@@ -257,14 +261,22 @@ class WizValidator:
             warns[param].append((stars[severity], message))
 
         def getvals(*keys):
-            """ Returns (k1, v1, k2, v2, ...), or a sequence of
-                 None values if a key is missing. """
+            """ Returns (k1, v1, k2, v2, ...) pairs.
+
+                 A key absent from the active parameter set yields (None, None)
+                 for its own pair, but the remaining requested keys are still
+                 returned normally.  Collapsing the whole tuple to Nones when
+                 *any* key was missing hid present values, so discovery removing
+                 one parameter silently disabled every rule that referenced it.
+            """
             nonlocal vals
-            num_keys = len(keys)
-            if all(key in vals for key in keys):
-                result_pairs = ((key, vals[key]) for key in keys)
-                return sum(result_pairs, ())
-            return tuple([None] * (num_keys * 2))
+            result = []
+            for key in keys:
+                if key in vals:
+                    result.extend((key, vals[key]))
+                else:
+                    result.extend((None, None))
+            return tuple(result)
 
         def hey_if(bad, param_name, severity, message):
             nonlocal all_warn_info
@@ -294,7 +306,8 @@ class WizValidator:
         # 'splash' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
         bad = p2 and re.search(r'\b(splash|quiet|rhgb)\b', avi(v2))
-        hey_if(bad, p2, 3, f'splash/quiet/rhgb belong only in {sh(p1)}')
+        hey_if(bad, p2, 3,
+               f'splash/quiet/rhgb belong only in {sh(p1, "GRUB_CMDLINE_LINUX_DEFAULT")}')
 
         # LUKS active but no rd.luks.uuid in GRUB_CMDLINE_LINUX
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
@@ -346,26 +359,30 @@ class WizValidator:
         term_in = unquote(avi(v2)) if exist(v2) else 'console'
         term_out = unquote(avi(v3)) if exist(v3) else ''
         bad = p1 and exist(v1) and 'serial' not in term_out and 'serial' not in term_in
-        hey_if(bad, p1, 2, f'set but neither {sh(p2)} or {sh(p3)} are "serial"')
+        hey_if(bad, p1, 2,
+               f'set but neither {sh(p2, "GRUB_TERMINAL_INPUT")} or '
+               f'{sh(p3, "GRUB_TERMINAL_OUTPUT")} are "serial"')
 
         # TERMINAL_INPUT is serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT')
         term_in = unquote(avi(v2)) if exist(v2) else 'console'
-        bad = p2 and 'serial' in term_in and not exist(v1)
+        # Only warn when SERIAL_COMMAND is itself part of the active set;
+        # otherwise the warning would be attached to a non-existent parameter.
+        bad = p1 and p2 and 'serial' in term_in and not exist(v1)
         hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
         hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be set')
 
         # TERMINAL_OUTPUT is serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_OUTPUT')
         term_out = unquote(avi(v2)) if exist(v2) else ''
-        bad = p2 and 'serial' in term_out and not exist(v1)
+        bad = p1 and p2 and 'serial' in term_out and not exist(v1)
         hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
         hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be set')
 
         # GRUB_TERMINAL contains serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL')
         terminal = unquote(avi(v2))
-        bad = p2 and 'serial' in terminal and not exist(v1)
+        bad = p1 and p2 and 'serial' in terminal and not exist(v1)
         hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
         hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be configured')
 
@@ -380,14 +397,16 @@ class WizValidator:
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL', 'GRUB_GFXMODE')
         terminal = unquote(avi(v1))
         bad = p1 and 'gfxterm' in terminal and not exist(v2)
-        hey_if(bad, p1, 1, f'when gfxterm, {sh(p2)} should be set')
+        hey_if(bad, p1, 1, f'when gfxterm, {sh(p2, "GRUB_GFXMODE")} should be set')
 
         # SAVEDEFAULT=true but DEFAULT is numeric (menu can reorder)
         p1, v1, p2, v2 = getvals('GRUB_SAVEDEFAULT', 'GRUB_DEFAULT')
         default_value = avi(v2) if exist(v2) else '0'
-        bad = p1 and avi(v1) in quotes('true') and unquote(default_value).isdigit()
-        hey_if(bad, p1, 1, f'when "true", {sh(p2)} should not be numeric')
-        hey_if(bad, p2, 1, f'avoid numeric when {sh(p1)}="true"')
+        # Require DEFAULT to be active: otherwise the second warning would be
+        # filed under a None key for a parameter discovery already removed.
+        bad = p1 and p2 and avi(v1) in quotes('true') and unquote(default_value).isdigit()
+        hey_if(bad, p1, 1, f'when "true", {sh(p2, "GRUB_DEFAULT")} should not be numeric')
+        hey_if(bad, p2, 1, f'avoid numeric when {sh(p1, "GRUB_SAVEDEFAULT")}="true"')
 
         # GRUB_CMDLINE_LINUX has spaces but not quoted
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
@@ -445,6 +464,9 @@ class WizValidator:
 
             if has_enums and has_no_regex:
                 p1, v1 = getvals(param_name)
+                # Reset per parameter: `bad` otherwise carries over from the
+                # previous rule and can emit a warning for an absent parameter.
+                bad = False
                 if p1 and exist(v1):
                     value = str(unquote(v1))
                     found = any(value == unquote(str(k)) for k in enums.keys())

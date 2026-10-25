@@ -14,7 +14,7 @@ The project has a coherent modular structure and a good safety-oriented concept,
 2. `/etc/default/grub` is overwritten without syntax validation, atomically, or with rollback; a failed `update-grub` leaves the risky file in place.
 3. ~~`--discovery=enable|disable` crashes due to a typo.~~ Fixed: the branch reads `opts.discovery` and is covered by [`tests/test_cli_args.py`](test_cli_args.py).
 4. ~~Disk-layout detection is effectively dead due to wrong JSON key casing, so LUKS/LVM/multiboot warnings are wrong.~~ Fixed: the probe reads `lsblk`'s lowercase keys, walks flat and nested layouts, and no longer treats vfat as another OS.
-5. The validator crashes when any cross-referenced parameter is missing from the active parameter set.
+5. ~~The validator crashes when any cross-referenced parameter is missing from the active parameter set.~~ Fixed: values are resolved per key, messages are `None`-safe, and rules no longer warn about parameters absent from the active set.
 6. The documented custom-config workflow cannot produce a valid, functional config.
 7. ~~`requires-python >=3.8` is false: the code uses PEP 701 f-strings (Python 3.12+) and the pinned dependency requires Python 3.10+.~~ Fixed: the f-string was rewritten and the project now declares `>=3.10`.
 
@@ -29,7 +29,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | C3 | ✅ | The only PEP 701 f-string was rewritten, so nothing in the tree needs 3.12+ syntax. `requires-python` is now `>=3.10` (the floor imposed by `console-window==2.0.1`), classifiers cover 3.10–3.13, and CI tests 3.10–3.13. |
 | H1 | ✅ | [`main.py:1892`](../grub_wiz/main.py:1892) reads `opts.discovery`; `--discovery=enable\|disable\|show` all exit 0, and [`tests/test_cli_args.py`](test_cli_args.py) covers all three. |
 | H2 | ✅ | `probe_disk_layout()` reads lowercase keys, walks flat and nested `lsblk` trees, skips `loop`/`rom`, counts only NTFS/exFAT and Microsoft partition GUIDs on non-removable media, and dedupes `efibootmgr` entries by `\EFI\<dir>`. [`tests/test_disk_layout.py`](test_disk_layout.py) covers 16 cases. |
-| H3–H8 | ☐ | Unchanged. |
+| H3 | ✅ | [`getvals()`](../grub_wiz/WizValidator.py:263) resolves each key independently, [`sh()`](../grub_wiz/WizValidator.py:251) is `None`-safe with fallback names, companion-parameter rules require the companion to be active, and the enum loop resets `bad` per parameter. [`tests/test_validator_rules.py`](test_validator_rules.py:802) covers the audit reproduction and five related paths. |
+| H4–H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
 | M1–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
@@ -37,7 +38,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M8–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
-Remaining P0 work is H3 and H8.
+Remaining P0 work is H8.
 
 ---
 
@@ -142,7 +143,7 @@ Consequences: the LUKS/LVM warnings at [`WizValidator.py:262`](../grub_wiz/WizVa
 
 **Remediation:** [`probe_disk_layout()`](../grub_wiz/WizValidator.py:55) now reads the lowercase JSON keys and walks every device depth-first via [`_walk_block_devices()`](../grub_wiz/WizValidator.py:38), so flat and nested `lsblk` layouts are both scanned; `loop` and `rom` devices are skipped. Multi-boot detection no longer treats vfat as evidence on its own: only NTFS/exFAT filesystems and the Microsoft basic-data/recovery partition GUIDs count, and removable media is excluded. The `efibootmgr` fallback now groups entries by their `\EFI\<dir>` loader directory, so one OS that registers both shim and grub (as on the audit host) is not counted twice. The same host now probes as `has_another_os=True, is_luks_active=True` instead of three `False`s. Hermetic coverage in [`tests/test_disk_layout.py`](test_disk_layout.py) exercises flat vs. nested JSON, LUKS/LVM (including LVM below a LUKS mapping), ESP-only systems, internal vs. removable NTFS, loop devices, duplicate EFI loaders, missing `lsblk`, bad JSON, and caching.
 
-### H3. Validator crashes when a cross-referenced parameter is missing
+### H3. Validator crashes when a cross-referenced parameter is missing — ✅ FIXED
 
 [`getvals()`](../grub_wiz/WizValidator.py:221) returns a tuple of `None`s when any requested key is absent ([`WizValidator.py:229`](../grub_wiz/WizValidator.py:229)). Many rules unconditionally build messages containing `sh(p2)` before [`hey_if()`](../grub_wiz/WizValidator.py:231) decides whether the rule fired, e.g.:
 
@@ -153,6 +154,8 @@ With a partial `param_cfg` (e.g. `{'GRUB_DEFAULT': {}}`), the reproduced failure
 `TypeError: 'NoneType' object is not subscriptable` in [`sh()`](../grub_wiz/WizValidator.py:213).
 
 This matters in production because [`reinit_gw()`](../grub_wiz/main.py:1019) passes the *discovery-filtered* `param_cfg` to [`make_warns()`](../grub_wiz/WizValidator.py:186) at [`main.py:1078`](../grub_wiz/main.py:1078). If discovery ever removes a cross-referenced parameter, startup fails.
+
+**Remediation:** [`getvals()`](../grub_wiz/WizValidator.py:263) now returns each requested `(name, value)` pair independently, so one absent key no longer discards the values of the keys that are present. [`sh()`](../grub_wiz/WizValidator.py:251) tolerates a missing name and accepts a fallback, so message construction can no longer raise. Rules that warn about a companion parameter now require that companion to be in the active set, which also avoids filing warnings under a `None` key ([`WizValidator.py:369`](../grub_wiz/WizValidator.py:369), [`WizValidator.py:405`](../grub_wiz/WizValidator.py:405)); the enum loop resets `bad` per parameter instead of reusing the previous rule's value ([`WizValidator.py:467`](../grub_wiz/WizValidator.py:467)). Regression coverage in [`tests/test_validator_rules.py`](test_validator_rules.py:802) includes the exact `{'GRUB_DEFAULT': {}}` reproduction plus serial, gfxterm, SAVEDEFAULT/DEFAULT, and splash/CMDLINE cases; `pytest -q` passes (50 tests).
 
 ### H4. The documented custom-config workflow is unusable
 

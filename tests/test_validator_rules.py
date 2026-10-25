@@ -799,6 +799,79 @@ def test_enum_validation():
     print(f"\nPassed: {passed}/{total}")
 
 
+def test_missing_cross_referenced_params():
+    """H3: a cross-referenced parameter missing from the active set must not crash.
+
+    ``getvals`` used to return an all-None tuple as soon as any requested key
+    was absent, and messages were built with ``sh(p2)`` before the rule decided
+    whether it fired.  A discovery-filtered ``param_cfg`` (which is what
+    ``main.reinit_gw`` passes to ``make_warns``) therefore crashed with
+    ``TypeError: 'NoneType' object is not subscriptable``.
+    """
+    print("\n" + "=" * 70)
+    print("TEST: missing cross-referenced parameters")
+    print("=" * 70)
+
+    scenarios = [
+        # (description, param_cfg, vals, expected warning params)
+        # Exact audit reproduction: only GRUB_DEFAULT is active.
+        ('only GRUB_DEFAULT active',
+         {'GRUB_DEFAULT': {}},
+         {'GRUB_DEFAULT': 'saved'},
+         set()),
+        # Discovery removed SERIAL_COMMAND while a terminal still says serial.
+        ('serial terminal without active SERIAL_COMMAND',
+         {'GRUB_TERMINAL_INPUT': {}},
+         {'GRUB_TERMINAL_INPUT': 'serial'},
+         set()),
+        # Both terminal parameters are gone, but SERIAL_COMMAND remains.
+        ('SERIAL_COMMAND without active terminals',
+         {'GRUB_SERIAL_COMMAND': {}},
+         {'GRUB_SERIAL_COMMAND': 'serial --unit=0 --speed=115200'},
+         {'GRUB_SERIAL_COMMAND'}),
+        # GFXMODE is gone, so the message must still name it.
+        ('gfxterm without active GFXMODE',
+         {'GRUB_TERMINAL': {}},
+         {'GRUB_TERMINAL': 'gfxterm'},
+         {'GRUB_TERMINAL'}),
+        # DEFAULT is gone, so there is nothing numeric to warn about.
+        ('SAVEDEFAULT=true without active DEFAULT',
+         {'GRUB_SAVEDEFAULT': {}},
+         {'GRUB_SAVEDEFAULT': 'true'},
+         set()),
+        # DEFAULT is gone, but splash is still in the wrong parameter.
+        ('splash in CMDLINE_LINUX without active DEFAULT',
+         {'GRUB_CMDLINE_LINUX': {}},
+         {'GRUB_CMDLINE_LINUX': '"quiet splash"'},
+         {'GRUB_CMDLINE_LINUX'}),
+    ]
+
+    passed = 0
+    for description, param_cfg, vals, expected_params in scenarios:
+        validator = WizValidator(param_cfg)
+        validator._disk_layout_cache = SimpleNamespace(
+            has_another_os=False,
+            is_luks_active=False,
+            is_lvm_active=False,
+        )
+
+        warns, _ = validator.make_warns(vals)
+
+        assert None not in warns, (
+            f"{description}: warning filed under missing parameter name: {warns}")
+        assert set(warns) == expected_params, (
+            f"{description}: expected warnings on {expected_params}, got {warns}")
+        for pairs in warns.values():
+            for _, message in pairs:
+                assert 'None' not in message, (
+                    f"{description}: unresolved parameter name in message: {message}")
+
+        print(f"   ✓ PASS: {description}")
+        passed += 1
+
+    print(f"\nPassed: {passed}/{len(scenarios)}")
+
+
 def main():
     """Run all validation rule tests."""
     print("\n" + "=" * 70)
@@ -822,6 +895,7 @@ def main():
         test_timeout_limits,
         test_gfxmode_values,
         test_enum_validation,
+        test_missing_cross_referenced_params,
     ]
 
     failed_tests = []
