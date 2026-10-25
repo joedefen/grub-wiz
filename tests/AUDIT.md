@@ -26,7 +26,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 |---|---|---|
 | C1 | ✅ | Root-owned state moved to `/var/lib/grub-wiz` (cache, rollback) and `/run/grub-wiz` (session). User-directory writes use a directory fd plus `O_CREAT|O_EXCL|O_NOFOLLOW`, `fstat`/`fchmod`/`fchown`, and `os.replace()`. Restore rejects symlinks, NUL bytes, and command substitution. |
 | C2 | ✅ | Candidate is staged beside the target and checked with `sh -n` (`grub-script-check` is advisory only); the previous file is snapshotted in memory and in `/var/lib/grub-wiz`; replacement is atomic; `commit_and_update()` rolls the file back when the GRUB update fails and re-runs the update, so `grub.cfg` matches the restored file. |
-| C3 | ✅ | The only PEP 701 f-string was rewritten, so nothing in the tree needs 3.12+ syntax. `requires-python` is now `>=3.10` (the floor imposed by `console-window==2.0.1`), classifiers cover 3.10–3.13, and CI tests 3.10–3.13. |
+| C3 | ✅ | The only PEP 701 f-string was rewritten, so nothing in the tree needs 3.12+ syntax. `requires-python` is now `>=3.10` (the floor imposed by `console-window`), classifiers cover 3.10–3.13, and CI tests 3.10–3.13. |
 | H1 | ✅ | [`main.py:1892`](../grub_wiz/main.py:1892) reads `opts.discovery`; `--discovery=enable\|disable\|show` all exit 0, and [`tests/test_cli_args.py`](test_cli_args.py) covers all three. |
 | H2 | ✅ | `probe_disk_layout()` reads lowercase keys, walks flat and nested `lsblk` trees, skips `loop`/`rom`, counts only NTFS/exFAT and Microsoft partition GUIDs on non-removable media, and dedupes `efibootmgr` entries by `\EFI\<dir>`. [`tests/test_disk_layout.py`](test_disk_layout.py) covers 16 cases. |
 | H3 | ✅ | [`getvals()`](../grub_wiz/WizValidator.py:263) resolves each key independently, [`sh()`](../grub_wiz/WizValidator.py:251) is `None`-safe with fallback names, companion-parameter rules require the companion to be active, and the enum loop resets `bad` per parameter. [`tests/test_validator_rules.py`](test_validator_rules.py:802) covers the audit reproduction and five related paths. |
@@ -47,7 +47,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M11 | ☐ | Unchanged. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
 | M13, M15 | ☐ | Unchanged. |
-| M14 | ◐ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses. The exact `console-window` pin and its `NAVIGATION_KEYS` monkeypatch remain under discussion. |
+| M14 | ✅ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses; LEFT/RIGHT are taken per window through `ConsoleWindowOpts(taken_nav_keys=...)` on `console-window==2.0.2`, so the library's `NAVIGATION_KEYS` is no longer mutated. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
 No P0 items remain.
@@ -111,13 +111,13 @@ There is no `grub-script-check`, no shell-syntax check, no parse-back, no `fsync
 
 - [`main.py:859`](../grub_wiz/main.py:859) uses `f'{' ':>6}{line[:wid]}'`, which relies on PEP 701 and is a syntax error before Python 3.12.
 - [`ParamDiscovery.discover_params()`](../grub_wiz/ParamDiscovery.py:93) uses `tuple[Set[str], str]` as an evaluated annotation, requiring 3.9+.
-- The pinned `console-window==2.0.1` metadata declares `Requires-Python: >=3.10` and its source uses `ScreenStack | None`.
+- The pinned `console-window` metadata declares `Requires-Python: >=3.10` and its source uses `ScreenStack | None`.
 
 So the effective minimum is Python 3.12, not 3.8. Installation on 3.8–3.11 is either blocked by the dependency or fails at import/parse time.
 
 **Recommendation:** declare `requires-python = ">=3.12"` (and update classifiers), or rewrite the nested f-string and replace builtin-generic annotations.
 
-**Remediation:** the floor is **3.10**, not 3.12. The nested f-string was the only PEP 701 usage in the repository, and `console-window==2.0.1` — still the latest release — requires 3.10, so rewriting one expression is enough:
+**Remediation:** the floor is **3.10**, not 3.12. The nested f-string was the only PEP 701 usage in the repository, and `console-window` requires 3.10, so rewriting one expression is enough:
 
 - [`main.py:859`](../grub_wiz/main.py:859) now pads with `f'{indent}{line[:wid]}'`, where `indent = ' ' * 6` is computed once in `add_body()`, instead of nesting `' '` inside same-quoted f-string braces.
 - A tokenizer scan of `grub_wiz/`, `tests/`, and `runner` found no remaining nested f-string, reused quote character inside a replacement field, or multi-line replacement field.
@@ -333,13 +333,15 @@ The tests pass (`20 passed`) but:
 
 ### M14. Packaging and dependency drift
 
-- Exact pin [`console-window==2.0.1`](../pyproject.toml:16) combined with monkeypatching its internal [`NAVIGATION_KEYS`](../grub_wiz/main.py:24) at [`main.py:40`](../grub_wiz/main.py:40) is highly version-coupled. The latest commit message says “nailed the version of ConsoleWindow 3.1.2”, while the working tree pins 2.0.1 and the previous commit pinned 1.3.2.
+- Exact pin [`console-window==2.0.2`](../pyproject.toml:20) combined with monkeypatching its internal `NAVIGATION_KEYS` at [`main.py:40`](../grub_wiz/main.py:40) was highly version-coupled. The exact pin is deliberate policy — grub-wiz validates against one reviewed release, and the library owner may change its API between releases — but reaching into a module-level mutable set was not part of that policy. The latest commit message says “nailed the version of ConsoleWindow 3.1.2”, while the working tree pins 2.0.2 and earlier commits pinned 1.3.2 and 2.0.1.
 - Topic classifier [`Topic :: Multimedia :: Video`](../pyproject.toml:25) is unrelated and misleading.
 - [`[project.license]`](../pyproject.toml:31) with `text` is the legacy form under PEP 639; prefer an SPDX `license = "MIT"` and `license-files`.
 - No `[project.optional-dependencies]`, no `[tool.pytest.ini_options]`, no `[tool.ruff]`/`[tool.mypy]`.
 - The console entry point [`grub-wiz = "grub_wiz.main:main"`](../pyproject.toml:35) bypasses the top-level exception handler in [`main.py:1919`](../grub_wiz/main.py:1919) when the process is already root. Exceptions can leave curses in a broken state.
 
-**Remediation:** Most of this item is addressed. `pyproject.toml` now uses PEP 639 metadata (`license = "MIT"`, `license-files = ["LICENSE"]`, `Metadata-Version: 2.4`), replaces the multimedia topic with System/Boot and Systems Administration classifiers, requires `flit_core>=3.12`, and adds dev extras plus `[tool.ruff]`/`[tool.mypy]` configuration. The console script now points at [`run_cli()`](../grub_wiz/main.py:2167), which wraps [`main()`](../grub_wiz/main.py:2097) for both the installed script and `python -m grub_wiz.main`; it restores curses on exceptions and `KeyboardInterrupt`, and regression coverage is in [`tests/test_cli_args.py`](test_cli_args.py). The exact `console-window` pin and the `NAVIGATION_KEYS` monkeypatch are intentionally unchanged pending a separate decision about the supported console-window version.
+**Remediation:** This item is addressed. `pyproject.toml` now uses PEP 639 metadata (`license = "MIT"`, `license-files = ["LICENSE"]`, `Metadata-Version: 2.4`), replaces the multimedia topic with System/Boot and Systems Administration classifiers, requires `flit_core>=3.12`, and adds dev extras plus `[tool.ruff]`/`[tool.mypy]` configuration. The console script now points at [`run_cli()`](../grub_wiz/main.py:2170), which wraps [`main()`](../grub_wiz/main.py:2100) for both the installed script and `python -m grub_wiz.main`; it restores curses on exceptions, `KeyboardInterrupt`, and `SystemExit`, and regression coverage is in [`tests/test_cli_args.py`](test_cli_args.py).
+
+The `NAVIGATION_KEYS` monkeypatch is gone. `console-window` 2.0.2 adds `ConsoleWindowOpts(taken_nav_keys={key: label})`, which subtracts keys from *that window's* navigation set (`opts.nav_keys`), prints the app's label in the navigation help, and leaves `NAVIGATION_KEYS` untouched for every other window. grub-wiz declares its two bindings in [`TAKEN_NAV_KEYS`](../grub_wiz/main.py:45), passes them at construction in [`setup_win()`](../grub_wiz/main.py:1319), and gives the spinner the same effective set so `add_key()` still rejects genuine navigation keys while accepting LEFT/RIGHT ([`main.py:1370`](../grub_wiz/main.py:1370)). Regression coverage in [`tests/test_nav_keys.py`](test_nav_keys.py) asserts that importing and configuring grub-wiz does not mutate the library's set, that vertical navigation survives, that the spinner accepts the taken keys and still rejects `KEY_DOWN`, and that the help screen credits LEFT/RIGHT to the app instead of advertising them as navigation.
 
 ### M15. Restore does not make the restored configuration effective
 

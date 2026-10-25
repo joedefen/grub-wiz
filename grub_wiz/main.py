@@ -22,7 +22,6 @@ from argparse import ArgumentParser
 from pathlib import Path
 from types import SimpleNamespace
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
-from console_window import NAVIGATION_KEYS
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -37,23 +36,17 @@ from .UserConfigDir import UserConfigDir
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
 SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
 
+# Navigation keys this app reserves for its own actions, with the labels the
+# console-window navigation help should print for them.  Left/right cycle the
+# selected value, so the window takes the cursor keys for the app rather than
+# mutating console-window's global NAVIGATION_KEYS: the library keeps its
+# defaults for every other window in the process, and the help screen stops
+# advertising keys it no longer handles.
+TAKEN_NAV_KEYS = {
+    cs.KEY_LEFT: 'prev value',
+    cs.KEY_RIGHT: 'next value',
+}
 
-def release_arrow_keys_for_app():
-    """Allow LEFT/RIGHT to be bound to app actions.
-
-    console-window 2.0.1 reserves every code in ``NAVIGATION_KEYS``:
-    ``OptionSpinner.add_key()`` rejects it and ``ConsoleWindow.prompt()``
-    consumes it before the app sees it.  Neither cursor key has a scroll
-    action, though: ``_navigation_target()`` maps UP/DOWN and the page keys
-    only, so prompt() would silently swallow LEFT/RIGHT anyway.  The modules
-    ``console_window.keys``, ``.spinner`` and ``.window`` all hold a reference
-    to the same mutable set, so discarding the two codes in place un-reserves
-    them everywhere.  Vertical navigation still works, and dialogs keep their
-    left/right cursor editing via ``_DIALOG_SIMPLE_MOVES``, which does not
-    consult this set.
-    """
-    NAVIGATION_KEYS.discard(cs.KEY_LEFT)
-    NAVIGATION_KEYS.discard(cs.KEY_RIGHT)
 
 class Tab:
     """ TBD """
@@ -1308,19 +1301,25 @@ class GrubWiz:
 
     def setup_win(self):
         """TBD """
-        # LEFT/RIGHT are used here for cycle_prev/cycle_next, so release them
-        # from console-window's reserved navigation set before registering keys.
-        release_arrow_keys_for_app()
+        # LEFT/RIGHT drive cycle_prev/cycle_next on this app, so this window
+        # asks console-window to hand those codes over instead of mutating the
+        # library's global NAVIGATION_KEYS.  ``taken_nav_keys`` removes them
+        # from this window's navigation set only and prints the app's meaning
+        # in the navigation help; other windows in the process keep the full
+        # default set.  Dialogs and passthrough editing still get arrow-key
+        # cursor movement, which never consulted the navigation set.
+        win_opts = ConsoleWindowOpts(
+            head_line=True,
+            ctrl_c_terminates=False,
+            return_if_pos_change=True,
+            single_cell_scroll_indicator=True,
+            dialog_abort='ESC',
+            answer_show_redraws=self.cli_opts.answer_timeout_debug,
+            min_cols_rows=(70, 10),  # Allow smaller terminals (down from default 20 rows)
+            taken_nav_keys=TAKEN_NAV_KEYS,
+        )
 
         # Create ConsoleWindow first (needed by screen objects)
-        win_opts = ConsoleWindowOpts()
-        win_opts.head_line = True
-        win_opts.ctrl_c_terminates = False
-        win_opts.return_if_pos_change = True
-        win_opts.single_cell_scroll_indicator = True
-        win_opts.dialog_abort = 'ESC'
-        win_opts.answer_show_redraws = self.cli_opts.answer_timeout_debug
-        win_opts.min_cols_rows = (70, 10)  # Allow smaller terminals (down from default 20 rows)
         self.win = ConsoleWindow(win_opts)
 
         # Check terminal size at startup and wait for resize if too small
@@ -1363,8 +1362,12 @@ class GrubWiz:
         }
         self.ss = ScreenStack(self.win, None, SCREENS, self.screens)
 
-        # Create OptionSpinner with stack reference for proper action scoping
-        spinner = self.spinner = OptionSpinner(stack=self.ss)
+        # Create OptionSpinner with stack reference for proper action scoping.
+        # It validates add_key() against this window's effective navigation
+        # set, so LEFT/RIGHT are accepted as app keys while every remaining
+        # navigation key is still rejected.
+        spinner = self.spinner = OptionSpinner(stack=self.ss,
+                                               nav_keys=win_opts.nav_keys)
         self.spins = self.spinner.default_obj
 
         # Register all keys (with stack available, actions will be properly scoped)
