@@ -49,8 +49,10 @@ chmod +x tests/*.py
 GitHub Actions runs the suite on every push to `main`/`dev` and on every pull
 request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
 
-- Python 3.12 and 3.13 are tested on `ubuntu-latest` (3.12 is the real minimum
-  for the current syntax; audit item C3 is still open).
+- Python 3.10, 3.11, 3.12 and 3.13 are tested on `ubuntu-24.04`. 3.10 is the
+  minimum supported version, imposed by `console-window==2.0.1`
+  (`Requires-Python: >=3.10`) and matched by `requires-python` in
+  [`pyproject.toml`](../pyproject.toml:13).
 - The workflow installs `.[dev]`, byte-compiles the sources, runs `pytest`, and
   separately builds a wheel to catch packaging regressions.
 - The validator tests never call `lsblk`/`efibootmgr`; they inject a fixed

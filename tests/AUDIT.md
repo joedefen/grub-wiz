@@ -16,7 +16,7 @@ The project has a coherent modular structure and a good safety-oriented concept,
 4. Disk-layout detection is effectively dead due to wrong JSON key casing, so LUKS/LVM/multiboot warnings are wrong.
 5. The validator crashes when any cross-referenced parameter is missing from the active parameter set.
 6. The documented custom-config workflow cannot produce a valid, functional config.
-7. `requires-python >=3.8` is false: the code uses PEP 701 f-strings (Python 3.12+) and the pinned dependency requires Python 3.10+.
+7. ~~`requires-python >=3.8` is false: the code uses PEP 701 f-strings (Python 3.12+) and the pinned dependency requires Python 3.10+.~~ Fixed: the f-string was rewritten and the project now declares `>=3.10`.
 
 ## Remediation status (2026-10-25)
 
@@ -26,7 +26,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 |---|---|---|
 | C1 | ✅ | Root-owned state moved to `/var/lib/grub-wiz` (cache, rollback) and `/run/grub-wiz` (session). User-directory writes use a directory fd plus `O_CREAT|O_EXCL|O_NOFOLLOW`, `fstat`/`fchmod`/`fchown`, and `os.replace()`. Restore rejects symlinks, NUL bytes, and command substitution. |
 | C2 | ✅ | Candidate is staged beside the target and checked with `sh -n` (`grub-script-check` is advisory only); the previous file is snapshotted in memory and in `/var/lib/grub-wiz`; replacement is atomic; `commit_and_update()` rolls the file back when the GRUB update fails and re-runs the update, so `grub.cfg` matches the restored file. |
-| C3 | ☐ | Unchanged. |
+| C3 | ✅ | The only PEP 701 f-string was rewritten, so nothing in the tree needs 3.12+ syntax. `requires-python` is now `>=3.10` (the floor imposed by `console-window==2.0.1`), classifiers cover 3.10–3.13, and CI tests 3.10–3.13. |
 | H1–H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
 | M1–M5 | ☐ | Unchanged. |
@@ -35,7 +35,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M8–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
-Remaining P0 work is C3, H1, H2, H3, and H8.
+Remaining P0 work is H1, H2, H3, and H8.
 
 ---
 
@@ -90,7 +90,7 @@ There is no `grub-script-check`, no shell-syntax check, no parse-back, no `fsync
 - The syntax gate is `sh -n`, not `grub-script-check`. `/etc/default/grub` is sourced by distro shell scripts, not parsed by GRUB. `grub-script-check` rejects stock Ubuntu configs (it fails on `GRUB_DISTRIBUTOR=\`lsb_release -i -s ...\``), so using it as a gate would make valid machines uncommittable. It is still run when installed and its rejection is reported as an advisory warning.
 - The staged name is unique (`.<name>.grub-wiz-<pid>-<token>`) rather than the fixed `.new`, so a pre-planted file or symlink cannot influence the commit.
 
-### C3. Python version metadata is incorrect
+### C3. Python version metadata is incorrect — ✅ FIXED
 
 [`pyproject.toml:13`](../pyproject.toml:13) declares `requires-python = ">=3.8"` and classifiers include 3.8/3.9. In reality:
 
@@ -101,6 +101,14 @@ There is no `grub-script-check`, no shell-syntax check, no parse-back, no `fsync
 So the effective minimum is Python 3.12, not 3.8. Installation on 3.8–3.11 is either blocked by the dependency or fails at import/parse time.
 
 **Recommendation:** declare `requires-python = ">=3.12"` (and update classifiers), or rewrite the nested f-string and replace builtin-generic annotations.
+
+**Remediation:** the floor is **3.10**, not 3.12. The nested f-string was the only PEP 701 usage in the repository, and `console-window==2.0.1` — still the latest release — requires 3.10, so rewriting one expression is enough:
+
+- [`main.py:859`](../grub_wiz/main.py:859) now pads with `f'{indent}{line[:wid]}'`, where `indent = ' ' * 6` is computed once in `add_body()`, instead of nesting `' '` inside same-quoted f-string braces.
+- A tokenizer scan of `grub_wiz/`, `tests/`, and `runner` found no remaining nested f-string, reused quote character inside a replacement field, or multi-line replacement field.
+- No 3.11+ or 3.12+ runtime API is used (no `tomllib`, `StrEnum`, `TaskGroup`, `typing.Self`/`override`, `itertools.batched`, `Path.walk`, `datetime.UTC`, etc.), and `ast.parse(..., feature_version=(3, 10))` accepts every file.
+- `tuple[Set[str], str]` at [`ParamDiscovery.discover_params()`](../grub_wiz/ParamDiscovery.py:99) is a runtime-evaluated annotation, but PEP 585 builtin generics work from 3.9, so it needs no change at a 3.10 floor.
+- [`pyproject.toml:13`](../pyproject.toml:13) declares `requires-python = ">=3.10"` with 3.10–3.13 classifiers, and [`.github/workflows/tests.yml`](../.github/workflows/tests.yml) tests that whole range.
 
 ---
 

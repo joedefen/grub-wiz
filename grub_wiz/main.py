@@ -851,12 +851,13 @@ class ViewScreen(GrubWizScreen):
         """ TBD """
         gw = self.gw
         wid = self.win.cols - 7 # 4 num + SP before + 2SP after
+        indent = ' ' * 6 # align wrapped text past the 4-digit index column
         for idx, line in enumerate(gw.bak_lines):
             self.win.add_body(f'{idx:>4}', attr=cs.A_BOLD)
             self.win.add_body(f'  {line[:wid]}', resume=True)
             line = line[wid:]
             while line:
-                self.win.add_body(f'{' ':>6}{line[:wid]}')
+                self.win.add_body(f'{indent}{line[:wid]}')
                 line = line[wid:]
 
 class WarnScreen(GrubWizScreen):
