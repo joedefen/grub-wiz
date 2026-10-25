@@ -21,7 +21,9 @@ import pytest
 from ruamel.yaml import YAML
 
 import grub_wiz.CannedConfig as canned_config_module
-from grub_wiz.CannedConfig import CannedConfig
+from grub_wiz.CannedConfig import (
+    CannedConfig, EXPERT_EDIT, has_edit_regex, is_expert_edit)
+from grub_wiz.GrubFile import GrubFile
 
 
 def _packaged_text():
@@ -145,6 +147,59 @@ def test_copy_of_packaged_template_is_used_as_custom(tmp_path, monkeypatch):
     assert timeout['edit_re_human'] == 'number (-1 for infinite, 0 or positive integer)'
     # Metadata needed by DistroVars survived the load.
     assert cfg.data['_distro_vars_']['grub_cfg'][0] == '/boot/grub/grub.cfg'
+
+
+def test_expert_edit_is_a_string_sentinel():
+    """M3: ``EXPERT_EDIT`` had a trailing comma and was a one-element tuple."""
+    assert isinstance(EXPERT_EDIT, str)
+    assert EXPERT_EDIT == '>>EXPERT_EDIT<<'
+    assert is_expert_edit(EXPERT_EDIT)
+    assert not is_expert_edit('^\\d+$')
+
+
+def test_has_edit_regex_excludes_expert_sentinel():
+    """Only a real regex enables the validated ``[e]dit`` action."""
+    import re as _re
+    assert has_edit_regex(_re.compile(r'^\d+$'))
+    assert has_edit_regex('^\\d+$')
+    assert not has_edit_regex(EXPERT_EDIT)
+    for empty in (None, '', False):
+        assert not has_edit_regex(empty)
+
+
+def test_process_config_keeps_expert_edit_sentinel():
+    """``_process_config`` must not compile the sentinel into a regex."""
+    cfg = object.__new__(CannedConfig)
+    cfg.data = {'Test': {'GRUB_CUSTOM': {
+        'default': '', 'edit_re': EXPERT_EDIT,
+        'enums': {}, 'guidance': ''}}}
+    cfg._process_config()
+    custom = cfg.data['Test']['GRUB_CUSTOM']
+    assert custom['edit_re'] == EXPERT_EDIT
+    assert custom['edit_re_human'] == ''
+    assert custom['allow_command_sub'] is False
+
+
+def test_unvalidated_param_gets_string_expert_sentinel(tmp_path, monkeypatch):
+    """The ``default_cfg`` shallow copy must not smuggle a tuple into params."""
+    class _Discovery:
+        @staticmethod
+        def get_absent(_params):
+            return set()
+
+    monkeypatch.setattr(
+        'grub_wiz.GrubFile.ParamDiscovery.get_singleton',
+        staticmethod(lambda: _Discovery()))
+
+    grub_path = tmp_path / 'grub'
+    grub_path.write_text('GRUB_ZZ_CUSTOM_TEST_PARAM=value\n', encoding='utf-8')
+
+    grub = GrubFile({}, file_path=str(grub_path))
+
+    assert 'GRUB_ZZ_CUSTOM_TEST_PARAM' in grub.extra_params
+    assert grub.extra_params['GRUB_ZZ_CUSTOM_TEST_PARAM']['edit_re'] == EXPERT_EDIT
+    assert isinstance(
+        grub.extra_params['GRUB_ZZ_CUSTOM_TEST_PARAM']['edit_re'], str)
 
 
 def test_invalid_custom_config_falls_back_to_packaged(

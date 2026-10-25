@@ -84,6 +84,10 @@ class TestHelper:
 
         # Add default absent values for all params not in config
         vals = {param: GrubFile.ABSENT for param in self.param_cfg.keys()}
+        # A missing GRUB_DISTRIBUTOR is a warning in its own right (M1), so seed
+        # a valid value here; the dedicated distributor tests override it.
+        if 'GRUB_DISTRIBUTOR' in vals:
+            vals['GRUB_DISTRIBUTOR'] = 'Debian'
         vals.update(config)
 
         warns, _ = validator.make_warns(vals)
@@ -669,15 +673,24 @@ def test_cmdline_quoting():
     total = 0
 
     test_cases = [
-        # NOTE: The quoting validation logic has a bug - it doesn't properly detect
-        # unquoted values with spaces. Skipping "should warn" tests for now.
-        # The validation checks: avi(v1) not in quotes(unquote(avi(v1)))
-        # But unquoted values match the first element of quotes(), so they never trigger.
-        # TODO: Fix the validation logic in WizValidator.py
+        # Should warn: an unquoted space splits the value into separate words
+        # when /etc/default/grub is sourced.
+        ("CMDLINE_LINUX with unquoted spaces (should warn)",
+         {'GRUB_CMDLINE_LINUX': 'rd.luks.uuid=abc rd.lvm.vg=test'},
+         True, 'GRUB_CMDLINE_LINUX'),
+        ("CMDLINE_LINUX_DEFAULT with unquoted spaces (should warn)",
+         {'GRUB_CMDLINE_LINUX_DEFAULT': 'rd.luks.uuid=abc rd.lvm.vg=test'},
+         True, 'GRUB_CMDLINE_LINUX_DEFAULT'),
 
         # Should NOT warn: Properly quoted or no spaces
-        ("CMDLINE_LINUX with spaces, properly quoted (should NOT warn)",
+        ("CMDLINE_LINUX with spaces, properly double quoted (should NOT warn)",
          {'GRUB_CMDLINE_LINUX': '"rd.luks.uuid=abc rd.lvm.vg=test"'}, False),
+        ("CMDLINE_LINUX with spaces, properly single quoted (should NOT warn)",
+         {'GRUB_CMDLINE_LINUX': "'rd.luks.uuid=abc rd.lvm.vg=test'"}, False),
+        ("CMDLINE_LINUX_DEFAULT with spaces, properly quoted (should NOT warn)",
+         {'GRUB_CMDLINE_LINUX_DEFAULT': '"quiet splash"'}, False),
+        ("CMDLINE_LINUX with an unquoted word and a quoted space (should NOT warn)",
+         {'GRUB_CMDLINE_LINUX': 'foo="a b"'}, False),
         ("CMDLINE_LINUX without spaces (should NOT warn)",
          {'GRUB_CMDLINE_LINUX': 'rd.luks.uuid=abc'}, False),
         ("CMDLINE_LINUX empty (should NOT warn)",
@@ -780,6 +793,106 @@ def test_timeout_limits():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
+
+
+def test_distributor_missing_or_empty():
+    """M1: a missing/empty GRUB_DISTRIBUTOR must actually warn.
+
+    The old guard ``p1 and exist(v1)`` made every intended bad input
+    (ABSENT, COMMENT, '') skip the rule, so it never fired.
+    """
+    print("\n" + "=" * 70)
+    print("TEST: GRUB_DISTRIBUTOR missing or empty")
+    print("=" * 70)
+
+    helper = TestHelper()
+    passed = 0
+    total = 0
+
+    test_cases = [
+        # Should warn: no usable distro name
+        ("DISTRIBUTOR absent (should warn)",
+         {'GRUB_DISTRIBUTOR': GrubFile.ABSENT}, True, 'GRUB_DISTRIBUTOR'),
+        ("DISTRIBUTOR commented out (should warn)",
+         {'GRUB_DISTRIBUTOR': GrubFile.COMMENT}, True, 'GRUB_DISTRIBUTOR'),
+        ("DISTRIBUTOR empty (should warn)",
+         {'GRUB_DISTRIBUTOR': ''}, True, 'GRUB_DISTRIBUTOR'),
+        ("DISTRIBUTOR empty quotes (should warn)",
+         {'GRUB_DISTRIBUTOR': '""'}, True, 'GRUB_DISTRIBUTOR'),
+        ("DISTRIBUTOR whitespace only (should warn)",
+         {'GRUB_DISTRIBUTOR': '   '}, True, 'GRUB_DISTRIBUTOR'),
+
+        # Should NOT warn: plain names and command substitutions
+        ("DISTRIBUTOR plain name (should NOT warn)",
+         {'GRUB_DISTRIBUTOR': 'Debian'}, False),
+        ("DISTRIBUTOR quoted name (should NOT warn)",
+         {'GRUB_DISTRIBUTOR': '"Ubuntu"'}, False),
+        ("DISTRIBUTOR $(command) (should NOT warn)",
+         {'GRUB_DISTRIBUTOR': '$(lsb_release -i -s 2> /dev/null || echo Debian)'}, False),
+        ("DISTRIBUTOR `command` (should NOT warn)",
+         {'GRUB_DISTRIBUTOR': '`lsb_release -i -s`'}, False),
+    ]
+
+    for test_name, config, should_warn, *args in test_cases:
+        total += 1
+        expected_param = args[0] if args else None
+        if helper.run_test(test_name, config, should_warn, expected_param):
+            passed += 1
+
+    print(f"\nPassed: {passed}/{total}")
+
+
+def test_enum_bad_does_not_leak_between_params():
+    """M2: ``bad`` from a previous enum parameter must not warn the next one.
+
+    ``bad`` is assigned only inside the presence guard, so without an explicit
+    reset an absent parameter following an invalid enum value inherited
+    ``True`` and produced a spurious "value not in list" warning.
+    """
+    print("\n" + "=" * 70)
+    print("TEST: enum warning does not leak to the next parameter")
+    print("=" * 70)
+
+    param_cfg = {
+        'GRUB_FIRST_ENUM': {'enums': {'one': 'first'}},
+        'GRUB_SECOND_ENUM': {'enums': {'two': 'second'}},
+    }
+    validator = WizValidator(param_cfg)
+    validator._disk_layout_cache = SimpleNamespace(
+        has_another_os=False,
+        is_luks_active=False,
+        is_lvm_active=False,
+    )
+
+    scenarios = [
+        ('invalid then absent',
+         {'GRUB_FIRST_ENUM': 'bogus', 'GRUB_SECOND_ENUM': GrubFile.ABSENT},
+         {'GRUB_FIRST_ENUM'}),
+        ('absent then invalid',
+         {'GRUB_FIRST_ENUM': GrubFile.ABSENT, 'GRUB_SECOND_ENUM': 'bogus'},
+         {'GRUB_SECOND_ENUM'}),
+        ('invalid then valid',
+         {'GRUB_FIRST_ENUM': 'bogus', 'GRUB_SECOND_ENUM': 'two'},
+         {'GRUB_FIRST_ENUM'}),
+        ('valid then absent',
+         {'GRUB_FIRST_ENUM': 'one', 'GRUB_SECOND_ENUM': GrubFile.ABSENT},
+         set()),
+    ]
+
+    passed = 0
+    for description, vals, expected_params in scenarios:
+        warns, _ = validator.make_warns(vals)
+        enum_warns = {
+            name for name, pairs in warns.items()
+            if any('allowed values' in message for _, message in pairs)
+        }
+        assert enum_warns == expected_params, (
+            f"{description}: expected enum warnings on {expected_params}, "
+            f"got {enum_warns} ({warns})")
+        print(f"   ✓ PASS: {description}")
+        passed += 1
+
+    print(f"\nPassed: {passed}/{len(scenarios)}")
 
 
 def test_gfxmode_values():
@@ -950,6 +1063,8 @@ def main():
         test_terminal_graphical,
         test_savedefault_numeric,
         test_cmdline_quoting,
+        test_distributor_missing_or_empty,
+        test_enum_bad_does_not_leak_between_params,
         test_os_prober,
         test_timeout_limits,
         test_gfxmode_values,

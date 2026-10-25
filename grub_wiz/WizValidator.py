@@ -318,6 +318,24 @@ class WizValidator:
             return value
         def quotes(param): # all forms of simple value in grub config
             return (param, f'"{param}"', f"'{param}'")
+        def has_unquoted_space(value):
+            """True when value has whitespace outside single/double quotes.
+
+                ``quotes(unquote(v))`` cannot be used to detect quoting: it also
+                returns the bare (unquoted) form, so every value matched and the
+                "must be quoted" rules could never fire.
+                """
+            if not isinstance(value, str):
+                return False
+            in_single = in_double = False
+            for char in value:
+                if char == "'" and not in_double:
+                    in_single = not in_single
+                elif char == '"' and not in_single:
+                    in_double = not in_double
+                elif char.isspace() and not in_single and not in_double:
+                    return True
+            return False
         def sh(param, fallback=None): # "ShortHand": reduce GRUB_TIMEOUT to TIMEOUT
             # ``getvals`` yields None for a cross-referenced parameter that is
             # absent from the active set, so never index a missing name blindly.
@@ -494,12 +512,12 @@ class WizValidator:
 
         # GRUB_CMDLINE_LINUX has spaces but not quoted
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and ' ' in avi(v1) and avi(v1) not in quotes(unquote(avi(v1)))
+        bad = p1 and exist(v1) and has_unquoted_space(str(avi(v1)))
         hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
         # GRUB_CMDLINE_LINUX_DEFAULT has spaces but not quoted
         p1, v1 = getvals('GRUB_CMDLINE_LINUX_DEFAULT')
-        bad = p1 and ' ' in avi(v1) and avi(v1) not in quotes(unquote(avi(v1)))
+        bad = p1 and exist(v1) and has_unquoted_space(str(avi(v1)))
         hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
         # GRUB_BACKGROUND path doesn't exist
@@ -524,9 +542,13 @@ class WizValidator:
 
         # GRUB_DISTRIBUTOR missing or empty (not a shell command)
         p1, v1 = getvals('GRUB_DISTRIBUTOR')
-        val = v1 if exist(v1) else ''
+        # Do not require ``exist(v1)``: this rule exists precisely for the
+        # missing value, and ABSENT, COMMENT and '' all fail ``exist``.  Only a
+        # non-empty value (or a command substitution) is acceptable.
+        val = unquote(v1) if exist(v1) else ''
+        val = str(val).strip()
         is_shell_cmd = val.startswith('$(') or val.startswith('`')
-        bad = p1 and exist(v1) and ((val and not is_shell_cmd and not val.strip()) or not val)
+        bad = bool(p1) and not is_shell_cmd and not val
         hey_if(bad, p1, 2, 'should be distro name (it is missing/empty)')
 
         # OS-PROBER disabled on dual-boot system

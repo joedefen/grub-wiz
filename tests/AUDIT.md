@@ -35,7 +35,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | H7 | ✅ | [`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1091) now calls [`ensure_discovered()`](../grub_wiz/ParamDiscovery.py:285) before filtering, so discovery runs at startup on a fresh install and whenever the cache is stale. [`save_params()`](../grub_wiz/ParamDiscovery.py:162) now refreshes the in-memory cache so the regenerated result is what `get_absent()` sees. [`tests/test_param_discovery.py`](test_param_discovery.py) covers fresh install, stale-cache refresh, once-per-process retry, and the `reinit_gw()` wiring. |
 | H4, H8 | ☐ | Unchanged. |
 | H9 | ✅ | The editor now validates a whole-value shell grammar that allows plain GRUB values (`, = + : /`, etc.) and rejects splitting/expansion unless the parameter's `_re_specs_` entry opts into command substitution. Shipped enums/regexes were reconciled. |
-| M1–M5 | ☐ | Unchanged. |
+| M1–M3 | ✅ | Quoting rules now detect an unquoted value directly instead of testing membership in `quotes(unquote(v))`; the missing/empty `GRUB_DISTRIBUTOR` rule no longer requires `exist()`, so ABSENT/COMMENT/empty values warn; the enum loop resets `bad` per parameter and has a regression test; `EXPERT_EDIT` is a string and the UI uses `has_edit_regex()` instead of truthiness. |
+| M4–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
 | M7 | ✅ | User state directory is `0700`; `warn-db.yaml` is `0600`; the generated template is written user-owned instead of `root:root`. |
 | M8–M15 | ☐ | Unchanged. |
@@ -235,18 +236,24 @@ The shipped config is reconciled with that grammar rather than papered over: `GR
 
 ## Medium-severity findings
 
-### M1. Two validation rules are dead code
+### M1. Two validation rules are dead code — ✅ FIXED
 
 - Quoting rule: [`avi(v1) not in quotes(unquote(avi(v1)))`](../grub_wiz/WizValidator.py:356) can never be true because [`quotes()`](../grub_wiz/WizValidator.py:211) includes the unquoted value itself. The same flaw exists at [`WizValidator.py:361`](../grub_wiz/WizValidator.py:361). The test suite documents this instead of fixing it at [`test_validator_rules.py:617`](test_validator_rules.py:617).
 - Missing/empty `GRUB_DISTRIBUTOR` rule: [`bad = p1 and exist(v1) and ...`](../grub_wiz/WizValidator.py:388) is false for an absent value, so it never warns. Both rules were verified to produce no warning for the intended bad input.
 
-### M2. Stale `bad` leaks across enum iterations
+**Remediation:** a new `has_unquoted_space()` helper scans the value with the same single/double-quote tracking the parser uses, so `GRUB_CMDLINE_LINUX` and `GRUB_CMDLINE_LINUX_DEFAULT` now warn for a space outside quotes while fully quoted values and inner quoted spaces (`foo="a b"`) pass. The `GRUB_DISTRIBUTOR` rule no longer requires `exist(v1)` — which excluded exactly the ABSENT, COMMENT and `''` cases the rule is about — and still exempts whole-value `$(...)`/backtick command substitutions. [`test_cmdline_quoting()`](test_validator_rules.py) now includes both "should warn" cases (previously skipped with a TODO), and [`test_distributor_missing_or_empty()`](test_validator_rules.py) covers absent, commented, empty, empty-quotes and whitespace-only values plus the command-substitution exemptions. The shared test helper seeds a valid `GRUB_DISTRIBUTOR` so unrelated rule tests keep asserting about their own subject.
+
+### M2. Stale `bad` leaks across enum iterations — ✅ FIXED
 
 In the enum loop, [`bad`](../grub_wiz/WizValidator.py:413) is assigned only when `p1 and exist(v1)`, but [`hey_if(bad, ...)`](../grub_wiz/WizValidator.py:414) runs regardless. If the previous enum parameter warned, the next absent parameter inherits `bad=True`. A spurious `value not in list of allowed values` warning on an absent parameter was reproduced.
 
-### M3. `EXPERT_EDIT` is a tuple, not a string
+**Remediation:** the loop already sets `bad = False` before the presence guard (introduced with the H3 work); [`test_enum_bad_does_not_leak_between_params()`](test_validator_rules.py) now proves it for invalid→absent, absent→invalid, invalid→valid and valid→absent ordering, which the previous single-enum test could not observe.
+
+### M3. `EXPERT_EDIT` is a tuple, not a string — ✅ FIXED
 
 [`EXPERT_EDIT = '>>EXPERT_EDIT<<',`](../grub_wiz/CannedConfig.py:13) has a trailing comma. It happens to work because comparisons include both the tuple and its first element, but it is truthy in boolean contexts, causing the UI to advertise `[e]dit` for expert-only parameters at [`main.py:295`](../grub_wiz/main.py:295) and [`main.py:1389`](../grub_wiz/main.py:1389). It also propagates through the shallow copy at [`GrubFile.py:286`](../grub_wiz/GrubFile.py:286).
+
+**Remediation:** [`EXPERT_EDIT`](../grub_wiz/CannedConfig.py:13) is now a plain string. [`is_expert_edit()`](../grub_wiz/CannedConfig.py:16) and [`has_edit_regex()`](../grub_wiz/CannedConfig.py:27) express the two meanings explicitly, [`_process_config()`](../grub_wiz/CannedConfig.py:143) keeps the sentinel instead of compiling it as a regex, and the UI checks `has_edit_regex()` before advertising or enabling the validated `[e]dit` action ([`main.py:350`](../grub_wiz/main.py:350), [`main.py:424`](../grub_wiz/main.py:424), [`main.py:1595`](../grub_wiz/main.py:1595)). `[E]xpertEdit` remains available. [`test_canned_config.py`](test_canned_config.py) asserts the sentinel type, the helper semantics, that `_process_config()` preserves it, and that an unvalidated `GrubFile` parameter receives a string sentinel rather than a tuple.
 
 ### M4. `GrubCfgParser` contract and implementation disagree
 
@@ -378,9 +385,9 @@ The tests pass (`20 passed`) but:
 10. Keep `spinner.stack` in sync when replacing `ScreenStack`; check restore return values (H6).
 11. ✅ Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
 12. ✅ Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
-13. Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
+13. ✅ Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
 14. Run `update-grub` after restore or clearly document the two-step behavior; check restore success (M15).
-15. Fix `EXPERT_EDIT`, `GrubCfgParser`, `demo()`, and `dump()` (M3–M5).
+15. ✅ Fix `EXPERT_EDIT` (M3); ☐ fix `GrubCfgParser`, `demo()`, and `dump()` (M4–M5).
 
 **P2 — hardening, testing, and maintainability**
 
@@ -417,4 +424,5 @@ The tests pass (`20 passed`) but:
 - Custom-config probe (H4): the packaged `canned_config.yaml` now passes `validate_schema()` unchanged, and an exact copy in a temporary user-config directory is selected as `using_path` with `edit_re` resolved against `_re_specs_` and `_distro_vars_` intact. [`tests/test_canned_config.py`](test_canned_config.py) also covers reserved metadata sections, runtime-only `edit_re_human`, malformed sections, and fallback to the packaged template. `pytest -q` — 64 passed.
 - Discovery probe (H7): [`tests/test_param_discovery.py`](test_param_discovery.py) injects a fake state directory and a fake `discover_params()`. It verifies that a missing cache is discovered on the first `ensure_discovered()`, that a one-week-old `OK` cache is regenerated and the regenerated set—not the stale in-memory snapshot—drives `get_absent()`, that a `NO_INFO` attempt is not repeated within a process, and that `GrubWiz.reinit_gw()` calls discovery before it drops unsupported parameters. `pytest -q` — 74 passed.
 - Shell-value probe (H9): `1024x768,auto` and paths without spaces pass unquoted; an unquoted space is refused with a quoting hint; `$(reboot)`, backticks and `"$(reboot)"` are refused by default; `$(lsb_release -i -s)` is accepted only for a parameter whose spec opted in (and by expert edit); every shipped enum passes [`check_shell_value()`](../grub_wiz/main.py:1083) and matches its own `edit_re`. `pytest -q` — 145 passed.
+- Validator probe (M1–M2): an unquoted `GRUB_CMDLINE_LINUX='rd.luks.uuid=abc rd.lvm.vg=test'` now warns while the double- and single-quoted forms and `foo="a b"` do not; `GRUB_DISTRIBUTOR` warns for ABSENT, COMMENT, `''`, `'""'` and whitespace-only, and does not warn for a plain name or a `$(...)`/backtick command. Enum ordering probes show a warning only on the parameter whose value is actually invalid. `EXPERT_EDIT` is a `str`, `has_edit_regex(EXPERT_EDIT)` is `False`, and an adopted `GrubFile` parameter carries the string sentinel. `pytest -q` — 151 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.

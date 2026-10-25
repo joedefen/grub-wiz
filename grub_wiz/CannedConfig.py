@@ -10,7 +10,30 @@ yaml = YAML()
 yaml.preserve_quotes = True
 yaml.default_flow_style = False
 
-EXPERT_EDIT = '>>EXPERT_EDIT<<', # not a regex (SPECIAL MEANING)
+EXPERT_EDIT = '>>EXPERT_EDIT<<'  # not a regex (SPECIAL MEANING)
+
+
+def is_expert_edit(edit_re):
+    """True when ``edit_re`` is the expert-edit sentinel, not a regex.
+
+    The sentinel used to be a one-element tuple (a stray trailing comma).  It
+    compared equal to its own first element by accident and was truthy, so UI
+    code that tested ``if edit_re`` advertised a regex-validated ``[e]dit`` for
+    parameters that only have expert editing.
+    """
+    return edit_re == EXPERT_EDIT
+
+
+def has_edit_regex(edit_re):
+    """True when ``edit_re`` is a real validation regex.
+
+    Use this instead of truthiness wherever the UI decides whether the
+    validated edit action is available; ``EXPERT_EDIT`` is a truthy string but
+    means "no regex, expert edit only".
+    """
+    return bool(edit_re) and not is_expert_edit(edit_re)
+
+
 class CannedConfig:
     """ TBD"""
     default_cfg = {  # config schema for a single parameter
@@ -118,7 +141,12 @@ class CannedConfig:
                 # Process edit_re field
                 edit_re = cfg.get('edit_re', '')
                 if edit_re:
-                    if isinstance(edit_re, str):
+                    if is_expert_edit(edit_re):
+                        # EXPERT_EDIT is a sentinel, not a regex: keep it as-is
+                        # and add the empty runtime metadata.
+                        cfg['edit_re_human'] = ''
+                        cfg['allow_command_sub'] = False
+                    elif isinstance(edit_re, str):
                         # Check if it's a reference to _re_specs_
                         if edit_re in regex_lookup:
                             # Resolve to compiled pattern and add human description
@@ -136,10 +164,6 @@ class CannedConfig:
                                 cfg['edit_re'] = ''
                                 cfg['edit_re_human'] = ''
                             cfg['allow_command_sub'] = False
-                    elif edit_re in (EXPERT_EDIT, EXPERT_EDIT[0]):
-                        # Keep EXPERT_EDIT as-is, add empty human description
-                        cfg['edit_re_human'] = ''
-                        cfg['allow_command_sub'] = False
                     else:
                         # Unknown type, set empty
                         cfg['edit_re_human'] = ''

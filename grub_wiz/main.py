@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
 from console_window import NAVIGATION_KEYS
-from .CannedConfig import CannedConfig, EXPERT_EDIT
+from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
 from .GrubCfgParser import get_top_level_grub_entries
@@ -345,7 +345,9 @@ class HomeScreen(GrubWizScreen):
         if cat == 'param':
             if enums:
                 middle += '⮜–⮞'
-            if regex:
+            # EXPERT_EDIT is truthy but is not a regex; only a real regex means
+            # the value will be validated, which is what [e]dit promises.
+            if has_edit_regex(regex):
                 middle += ' [e]dit'
             if param_name:
                 if gw.is_active_param( param_name):
@@ -419,7 +421,7 @@ class HomeScreen(GrubWizScreen):
         """Handle 'e' key on HOME/REVIEW screen - edit parameter value"""
         gw = self.gw
         name, _, _, regex, _ = gw.get_enums_regex()
-        if regex:
+        if has_edit_regex(regex):
             gw.edit_param(self.win, name, regex)
 
     def expert_edit_ACTION(self):
@@ -1590,7 +1592,7 @@ class GrubWiz:
             if not enums:
                 return []
             value = self.param_values[param_name]
-            edit = ' or [e]dit' if cfg['edit_re'] else ''
+            edit = ' or [e]dit' if has_edit_regex(cfg['edit_re']) else ''
             # wrapped = f': 🡄 🡆 {edit}:\n'
             wrapped = f': ⮜–⮞ {edit}:\n'
             for enum, descr in cfg['enums'].items():
@@ -1632,7 +1634,7 @@ class GrubWiz:
         """ Prompt user for answer until gets it right"""
 
         # Check if this param uses EXPERT_EDIT mode
-        if regex in (EXPERT_EDIT, EXPERT_EDIT[0]):
+        if is_expert_edit(regex):
             self.expert_edit_param(win, name)
             return
 
