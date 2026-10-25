@@ -135,73 +135,132 @@ class GrubFile:
 
         return '\n'.join(guidance_lines)
 
+    @staticmethod
+    def _is_continuation_line(text: str) -> bool:
+        """
+        Returns True when *text* ends with an unescaped backslash, i.e. when
+        the backslash still escapes the following newline.
+
+        ``text`` is expected to be already right-stripped.  A doubled
+        backslash (``\\\\``) is a literal backslash and therefore does *not*
+        continue the line.
+        """
+        if not text.endswith('\\'):
+            return False
+        preceding = 0
+        for char in reversed(text[:-1]):
+            if char != '\\':
+                break
+            preceding += 1
+        return preceding % 2 == 0
+
+    @staticmethod
+    def _open_quote(text: str) -> Optional[str]:
+        """
+        Returns the quote character that is still open at the end of *text*,
+        or ``None`` when every quote has been closed.
+
+        Backslash escapes are honoured for both quote styles.  Treating a
+        single-quoted backslash as an escape is deliberate and pragmatic: it
+        keeps ``'C:\\`` from looking like an unterminated string and matches
+        how these values are usually hand-edited.  The caller only uses this
+        to decide whether a trailing backslash is a real continuation.
+        """
+        quote: Optional[str] = None
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char == '\\':
+                # Skip the escaped character (inside or outside quotes).
+                index += 2
+                continue
+            if quote is None:
+                if char in ('"', "'"):
+                    quote = char
+            elif char == quote:
+                quote = None
+            index += 1
+        return quote
+
     def _join_continuation_lines(self):
         """
         Pass 1a: Join backslash continuation lines physically in self.lines.
-        Pattern: PARAM="value \
+        Pattern: PARAM="value \\
                  continued"
+
+        Both double- and single-quoted values are joined.  A line is only
+        treated as a continuation when it is a ``[#]GRUB_*`` assignment whose
+        opening quote is *still open* after the trailing backslash is removed.
+        That check is what stops a malformed trailing backslash (a value that
+        is already closed, or a plain prose comment containing ``=`` and a
+        quote) from swallowing the following, unrelated line.
 
         Modifies self.lines in place, replacing continuation sequences with single lines.
         Works for both commented and uncommented lines.
         """
         i = 0
         while i < len(self.lines):
-            line = self.lines[i]
-            stripped = line.rstrip()
+            stripped = self.lines[i].rstrip()
 
-            # Check if line ends with backslash (potential continuation)
-            if not stripped.endswith('\\'):
+            # Only ``[#]GRUB_XXX=...`` assignments may be continued.  A
+            # free-form comment that happens to end in a backslash must stay
+            # untouched (audit: malformed backslashes joined unrelated lines).
+            match = re.match(
+                r"\s*(#)?\s*(GRUB(_[A-Z]+)+)\s*=(.*)$", stripped)
+            if not match or not self._is_continuation_line(stripped):
                 i += 1
                 continue
 
-            # Check if it's a parameter assignment with quoted value and backslash continuation
-            # Pattern: [#]GRUB_XXX="...text \
-            # Look for = followed by " anywhere in the line
-            if '=' not in line or '"' not in line:
+            value_part = match.group(4)
+            quote = value_part.lstrip()[:1]
+            if quote not in ('"', "'"):
                 i += 1
                 continue
 
-            # Extract the part after the first = sign.  str.split() cannot
-            # fail here, so a bare ``except:`` only hid real bugs (audit).
-            equals_parts = line.split('=', 1)
-            if len(equals_parts) < 2:
-                i += 1
-                continue
-            value_part = equals_parts[1].rstrip()
-            # Check if value starts with " and ends with \
-            if not (value_part.startswith('"') and value_part.endswith('\\')):
+            # Drop the continuation backslash before inspecting the value.
+            body = stripped[:-1]
+            value_body = body.split('=', 1)[1]
+            if self._open_quote(value_body) != quote:
+                # The quoted value is already closed (or never opened): the
+                # trailing backslash is malformed, so leave the line alone.
                 i += 1
                 continue
 
-            # Collect continuation lines
-            combined = stripped
+            is_commented = bool(match.group(1))
+            combined = body
             lines_consumed = 0
 
-            # Check if the first line is commented
-            is_commented = stripped.lstrip().startswith('#')
-
-            while combined.endswith('\\') and (i + lines_consumed + 1) < len(self.lines):
-                next_line = self.lines[i + lines_consumed + 1].rstrip()
+            while True:
+                next_index = i + lines_consumed + 1
+                if next_index >= len(self.lines):
+                    break
+                next_line = self.lines[next_index].rstrip()
                 next_stripped = next_line.strip()
 
-                # For commented continuations, expect # at start of continuation
-                # For uncommented continuations, # at start means malformed
                 if is_commented:
-                    # Continuation line should also be commented
+                    # Continuation of a commented-out assignment stays commented
                     if not next_stripped.startswith('#'):
                         break
-                    # Strip the leading # from the continuation line
-                    next_line = next_line.lstrip()
-                    if next_line.startswith('#'):
-                        next_line = next_line[1:]
+                    next_line = next_stripped[1:]
                 else:
-                    # Uncommented continuation shouldn't start with #
+                    # An uncommented value cannot continue onto a comment line
                     if next_stripped.startswith('#'):
                         break
+                    # ... nor onto what clearly is a new parameter assignment
+                    if re.match(r"\s*(GRUB(_[A-Z]+)+)\s*=", next_stripped):
+                        break
 
-                # Remove backslash and append next line
-                combined = combined[:-1] + next_line.rstrip()
+                has_more = self._is_continuation_line(next_line)
+                combined += next_line[:-1] if has_more else next_line
                 lines_consumed += 1
+
+                # Stop once the quoted value is closed.  A backslash after the
+                # closing quote continues the shell line, not the value, so it
+                # must not pull in another line.
+                if not has_more:
+                    break
+                if self._open_quote(combined.split('=', 1)[1]) != quote:
+                    break
 
             # Replace the first line with combined value
             self.lines[i] = combined + '\n'

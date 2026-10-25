@@ -9,6 +9,8 @@ contract:
   previous read.
 * ``$prefix`` expansion must use the distro's GRUB directory that exists
   (Fedora uses ``/boot/grub2``), not always ``/boot/grub``.
+* ``GrubFile._join_continuation_lines()`` must join single-quoted values and
+  must not let a malformed trailing backslash swallow an unrelated line.
 * ``prompt_line()`` must treat a closed stdin as the caller's safe default.
 * ``GrubWiz.long_params`` must not contain the stray ``'/'`` token, and an
   unknown parameter is not "active".
@@ -131,6 +133,118 @@ def test_prompt_line_treats_eof_as_default(monkeypatch):
 
     assert prompt_line('\n> ', default='') == ''
     assert prompt_line('Continue? [y/N]: ', default='n') == 'n'
+
+
+def test_single_quoted_continuation_is_joined(tmp_path):
+    """Values in single quotes must continue onto the next line too."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        "GRUB_CMDLINE_LINUX_DEFAULT='quiet splash \\\n"
+        "nowatchdog'\n"
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile(
+        {'GRUB_CMDLINE_LINUX_DEFAULT': {}, 'GRUB_TIMEOUT': {}},
+        file_path=str(conf),
+    )
+
+    assert grub.lines[0] == (
+        "GRUB_CMDLINE_LINUX_DEFAULT='quiet splash nowatchdog'\n")
+    assert grub.get_current_state('GRUB_CMDLINE_LINUX_DEFAULT') == \
+        "'quiet splash nowatchdog'"
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
+
+
+def test_commented_single_quoted_continuation_is_joined(tmp_path):
+    """A commented-out value keeps its comment while being joined."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        "#GRUB_CMDLINE_LINUX_DEFAULT='quiet \\\n"
+        "#splash'\n"
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile(
+        {'GRUB_CMDLINE_LINUX_DEFAULT': {}, 'GRUB_TIMEOUT': {}},
+        file_path=str(conf),
+    )
+
+    data = grub.param_data['GRUB_CMDLINE_LINUX_DEFAULT']
+    assert data.value == grub.COMMENT
+    assert data.out_value == "'quiet splash'"
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
+
+
+def test_malformed_trailing_backslash_does_not_join_next_line(tmp_path):
+    """A backslash after an already-closed value is not a continuation."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash" \\\n'
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile(
+        {'GRUB_CMDLINE_LINUX_DEFAULT': {}, 'GRUB_TIMEOUT': {}},
+        file_path=str(conf),
+    )
+
+    assert len(grub.lines) == 2
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
+
+
+def test_escaped_trailing_backslash_is_not_a_continuation(tmp_path):
+    """A literal (doubled) backslash must not continue the line."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        'GRUB_FOO="path\\\\\n'
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile(
+        {'GRUB_FOO': {}, 'GRUB_TIMEOUT': {}},
+        file_path=str(conf),
+    )
+
+    assert len(grub.lines) == 2
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
+
+
+def test_free_form_comment_backslash_is_not_joined(tmp_path):
+    """Prose comments containing '=' and a quote must never swallow a line."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        '# set GRUB_TIMEOUT=5 "loudly" \\\n'
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile({'GRUB_TIMEOUT': {}}, file_path=str(conf))
+
+    assert len(grub.lines) == 2
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
+
+
+def test_unterminated_quote_does_not_swallow_next_param(tmp_path):
+    """An open quote followed by a new assignment stops the join."""
+    conf = tmp_path / 'grub'
+    conf.write_text(
+        'GRUB_CMDLINE_LINUX_DEFAULT="unterminated \\\n'
+        'GRUB_TIMEOUT=5\n',
+        encoding='utf-8',
+    )
+
+    grub = GrubFile(
+        {'GRUB_CMDLINE_LINUX_DEFAULT': {}, 'GRUB_TIMEOUT': {}},
+        file_path=str(conf),
+    )
+
+    assert len(grub.lines) == 2
+    assert grub.get_current_state('GRUB_TIMEOUT') == '5'
 
 
 def test_long_params_has_no_stray_slash():

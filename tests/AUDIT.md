@@ -10,12 +10,12 @@ The project has a coherent modular structure and a good safety-oriented concept,
 
 **Highest-risk items**
 
-1. Root writes into a user-controlled directory, enabling symlink-based arbitrary root file overwrite; combined with restore + `update-grub`, this can become root code execution.
-2. `/etc/default/grub` is overwritten without syntax validation, atomically, or with rollback; a failed `update-grub` leaves the risky file in place.
+1. ~~Root writes into a user-controlled directory, enabling symlink-based arbitrary root file overwrite; combined with restore + `update-grub`, this can become root code execution.~~ Fixed: root-owned mutable state moved to `/var/lib/grub-wiz` and `/run/grub-wiz`; user-state writes reject symlinks and use atomic replacement (C1).
+2. ~~`/etc/default/grub` is overwritten without syntax validation, atomically, or with rollback; a failed `update-grub` leaves the risky file in place.~~ Fixed: the candidate is staged beside the target, checked with `sh -n`, installed with `os.replace`, snapshotted, and rolled back if the GRUB update fails (C2).
 3. ~~`--discovery=enable|disable` crashes due to a typo.~~ Fixed: the branch reads `opts.discovery` and is covered by [`tests/test_cli_args.py`](test_cli_args.py).
 4. ~~Disk-layout detection is effectively dead due to wrong JSON key casing, so LUKS/LVM/multiboot warnings are wrong.~~ Fixed: the probe reads `lsblk`'s lowercase keys, walks flat and nested layouts, and no longer treats vfat as another OS.
 5. ~~The validator crashes when any cross-referenced parameter is missing from the active parameter set.~~ Fixed: values are resolved per key, messages are `None`-safe, and rules no longer warn about parameters absent from the active set.
-6. The documented custom-config workflow cannot produce a valid, functional config.
+6. ~~The documented custom-config workflow cannot produce a valid, functional config.~~ Fixed: underscore-prefixed metadata sections are exempt from parameter validation, and `edit_re_human` is no longer required in the template (H4).
 7. ~~`requires-python >=3.8` is false: the code uses PEP 701 f-strings (Python 3.12+) and the pinned dependency requires Python 3.10+.~~ Fixed: the f-string was rewritten and the project now declares `>=3.10`.
 
 ## Remediation status (2026-10-25)
@@ -46,12 +46,12 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M10 | ✅ | [`DEFAULT_ETC_GRUB`](../grub_wiz/DistroVars.py:17) is the single constant; [`GrubFile.std_location`](../grub_wiz/GrubFile.py:54) and [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:19) derive from it. [`reinit_gw()`](../grub_wiz/main.py:1274) passes `DistroVars.etc_grub` to `GrubFile`, and `BackupMgr` is built with the same resolved target. |
 | M11 | ✅ | [`reinit_gw()`](../grub_wiz/main.py:1226) rebinds the validator to the rebuilt `param_cfg` through [`WizValidator.bind_param_cfg()`](../grub_wiz/WizValidator.py:42), works on a private deep copy of the config so `canned_config.data` is never mutated, and no longer calls `read_file()` a second time. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
-| M13 | ☐ | Unchanged. |
+| M13 | ◐ | Pytest fixtures and CI/coverage configuration were added, and `GrubWriter`, `BackupMgr`, `WarnDB`, `CannedConfig`, `ParamDiscovery`, CLI parsing, and the commit/rollback path now have tests. Remaining: importing the package still creates user state through the module-level [`USER_CONFIG`](../grub_wiz/BackupMgr.py:20) singleton, and direct [`UserConfigDir`](../grub_wiz/UserConfigDir.py:49) and TUI navigation coverage is still missing. |
 | M15 | ✅ | Restore stays intentionally source-only: it replaces `/etc/default/grub` and reloads the screens but does not run `update-grub`. The two-step behavior is documented in [`restore_ACTION()`](../grub_wiz/main.py:699), announced in a post-restore notice, and described in [`README.md`](../README.md:175). |
 | M14 | ✅ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses; LEFT/RIGHT are taken per window through `ConsoleWindowOpts(taken_nav_keys=...)` on `console-window==2.0.2`, so the library's `NAVIGATION_KEYS` is no longer mutated. |
-| Lower-severity items | ◐ | Most fixed: `$prefix` resolution, `GrubFile` re-read state, the redundant broad except, `WarnDB` non-mapping YAML, `tag_ACTION` overwrite guard, `request_backup_tag` hint/feedback, `long_params` stray token, unknown-param activation, `os.system`/`input()` use, runner comments, sample scripts, README accuracy, the `--validate-custom-config` verdict/exit status, and `BackupMgr`'s filename-keyed inventory. Remaining: single-quoted continuation joining, year-2999 sample timestamps, and the broad maintainability cleanup. The non-atomic state writes were fixed as part of C1. |
+| Lower-severity items | ◐ | Most fixed: `$prefix` resolution, `GrubFile` re-read state, the redundant broad except, `WarnDB` non-mapping YAML, `tag_ACTION` overwrite guard, `request_backup_tag` hint/feedback, `long_params` stray token, unknown-param activation, `os.system`/`input()` use, runner comments, sample scripts, README accuracy, the `--validate-custom-config` verdict/exit status, `BackupMgr`'s filename-keyed inventory, and continuation-line joining (single-quoted values and malformed trailing backslashes). Remaining: year-2999 sample timestamps and the broad maintainability cleanup. The non-atomic state writes were fixed as part of C1. |
 
-No P0 items remain.
+No P0 or P1 items remain.
 
 ---
 
@@ -361,8 +361,8 @@ Legend: ✅ fixed · ☐ open (needs a design decision or is out of scope).
 - ✅ [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) and [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:216) were broken and are now fixed (M5).
 - ✅ [`WizValidator.get_full_path_and_check_existence()`](../grub_wiz/WizValidator.py:142) now expands `$prefix` to the first GRUB directory that exists (`/boot/grub`, then `/boot/grub2`, then `/usr/share/grub`) instead of always `/boot/grub`, so Fedora paths resolve.
 - ✅ [`WizValidator.probe_disk_layout()`](../grub_wiz/WizValidator.py:89) no longer contains an early `break` at all: the H2 rewrite walks every device and sets independent flags.
-- ✅ [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128) no longer wraps an infallible `str.split()` in `except Exception` (the audit's bare `except:`).
-- ☐ Still open in that method: a malformed trailing backslash can still join unrelated lines, and only double-quoted continuations are joined.
+- ✅ [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:185) no longer wraps an infallible `str.split()` in `except Exception` (the audit's bare `except:`).
+- ✅ Continuation joining is complete. [`_join_continuation_lines()`](../grub_wiz/GrubFile.py:185) now joins single- and double-quoted values, and only treats a line as a continuation when it is a `[#]GRUB_*=` assignment whose opening quote is *still open* once the trailing backslash is removed. A malformed trailing backslash — a value that is already closed, a doubled/escaped backslash ([`_is_continuation_line()`](../grub_wiz/GrubFile.py:139)), a free-form comment containing `=` and a quote, or an unclosed quote followed by a new assignment — no longer swallows the next line, and a backslash after the closing quote stops the join instead of continuing the shell line. Regression coverage in [`tests/test_lower_severity_fixes.py`](test_lower_severity_fixes.py) covers single-quoted and commented single-quoted joins, the closed/quoted/escaped/comment/unterminated malformed cases, and the `pytest -q` suite passes (215 tests).
 - ✅ [`GrubFile.read_file()`](../grub_wiz/GrubFile.py:246) now clears `blacklisted_params`, `extra_params`, and the adopted extra params in `supported_params` (plus `param_data`) before re-parsing, so [`_scan_for_variable_expansion()`](../grub_wiz/GrubFile.py:208) state cannot survive a re-read.
 - ✅ [`WarnDB.refresh()`](../grub_wiz/WarnDB.py:49) now treats a non-mapping top-level YAML document, and non-list `inhibited`/non-dict `all_warnings` values, as an empty state instead of raising.
 - ✅ [`WarnDB.write_if_dirty()`](../grub_wiz/WarnDB.py:90) and the other state writes are atomic (C1).
@@ -400,37 +400,17 @@ Legend: ✅ fixed · ☐ open (needs a design decision or is out of scope).
 
 ---
 
-## Recommended remediation order
+## Recommended remaining remediation order
 
-**P0 — before any real-world use**
-
-1. ✅ Fix the privilege boundary (C1): move root-owned state out of the user directory and eliminate symlink-following writes.
-2. ✅ Make the commit path validate, atomically replace, and roll back (C2).
-3. ✅ Fix `requires-python` and classifiers to match reality (C3).
-4. ✅ Fix `opts.paramd` (H1).
-5. ✅ Fix `lsblk` key casing and scan both flat devices and children; stop treating every vfat ESP as another OS (H2).
-6. ✅ Make validator message construction lazy so missing cross-references cannot crash startup (H3).
-7. ✅ Change destructive confirmation defaults to “no” and require exact confirmation (H8).
-
-**P1 — correctness and user-facing promises**
-
-8. ✅ Repair the custom-config schema and validation workflow, including underscore sections and `edit_re_human` (H4).
-9. ✅ Fix the extra-params merge in the compare screen (H5).
-10. ✅ Keep `spinner.stack` in sync when replacing `ScreenStack`; check restore return values (H6).
-11. ✅ Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
-12. ✅ Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
-13. ✅ Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
-14. ✅ Keep restore intentionally source-only and clearly document the two-step behavior; check restore success (M15).
-15. ✅ Fix `EXPERT_EDIT` (M3), `GrubCfgParser` (M4), and `demo()`/`dump()` (M5).
+No P0 or P1 items remain. The remaining work is hardening and maintainability.
 
 **P2 — hardening, testing, and maintainability**
 
-16. Make tests hermetic: inject config paths, fake discovery/disk probes, add pytest fixtures, and remove import-time side effects.
-17. Add tests for `GrubWriter`, `BackupMgr`, `WarnDB`, config validation, CLI parsing, and the commit/rollback path.
-18. Add CI, lint/type configuration, and a dev dependency group.
-19. ✅ Use `SUDO_USER` for ownership, tighten directory/file modes, and fix canned-template ownership (M6–M7).
-20. ✅ Refactor path handling to a single source of truth (M10); refresh validator/config state on reinit (M11).
-21. Replace stale `TBD` documentation, broad exceptions, and print-based diagnostics with logging.
+1. Finish making the test suite hermetic (M13, partial): remove the import-time `UserConfigDir.get_singleton()` call in [`BackupMgr.py:20`](../grub_wiz/BackupMgr.py:20), isolate `UserConfigDir` in [`tests/conftest.py`](conftest.py) alongside `ParamDiscovery`, and add direct coverage for [`UserConfigDir`](../grub_wiz/UserConfigDir.py:49) and the remaining TUI navigation/action scoping.
+2. Finish continuation handling in [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128): single-quoted continuations are still not joined, and a malformed trailing backslash can still join unrelated lines.
+3. Replace the remaining stale `TBD` docstrings/markers, broad `except Exception` handlers, and print-based diagnostics with logging and structured errors.
+
+Intentional, not scheduled: the year-2999 sample timestamps stay as they are because changing them would rename committed fixtures.
 
 ---
 
