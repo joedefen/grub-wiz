@@ -7,9 +7,19 @@ This directory contains regression tests for the `grub-wiz` project.
 ```
 tests/
 ├── README.md                          # This file
+├── conftest.py                        # Isolates user/system state per test
 ├── test_grubfile_parsing.py          # Test suite for GrubFile parsing
+├── test_grubfile_branches.py         # Duplicate lines, adoption, write failures
 ├── test_validator_rules.py           # Comprehensive test suite for WizValidator rules
 ├── test_grubwriter_commit.py         # Hermetic commit/rollback tests for GrubWriter
+├── test_grubwriter_commands.py       # Update/initramfs argv and failure paths
+├── test_param_discovery_internals.py # info parsing, cache rules, discovery CLI
+├── test_backup_restore.py            # Restore security guards and checksums
+├── test_distro_vars.py               # Startup path/binary resolution and gating
+├── test_canned_config_loading.py     # Custom-config loading and fallbacks
+├── test_warn_db_persistence.py       # Warning DB formats and write failures
+├── test_main_helpers.py              # Non-curses helpers in main.py
+├── test_cli_branches.py              # Reset/validation/demo and module CLIs
 ├── test_data/                        # Test GRUB configuration files
 │   ├── continuation_and_expansion.conf
 │   └── edge_cases.conf
@@ -57,8 +67,20 @@ request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
   separately builds a wheel to catch packaging regressions.
 - The validator tests never call `lsblk`/`efibootmgr`; they inject a fixed
   disk-layout object, so results do not depend on the runner's hardware.
-- Coverage is intentionally not gated yet; the remaining audit findings should
-  be addressed first.
+- The new command/restore/discovery tests never touch `/etc/default/grub` or
+  the real user state directory; they use the `tmp_path`-backed fake from
+  [`conftest.py`](conftest.py:148) and patch `os.geteuid()`.
+- Coverage is not gated. A branch-coverage run on 2026-10-25 measured 66%
+  overall: `BackupMgr`, `WarnDB`, `DistroVars`, `GrubWriter`, `CannedConfig`,
+  and `GrubCfgParser` are 93–100%; `GrubFile`, `WizValidator`, and
+  `ParamDiscovery` are 78–92%; `main.py` is 42% because most of it is curses
+  drawing. When `coverage` is installed (it is not currently in the `dev`
+  extras), run:
+
+  ```bash
+  python3 -m coverage run --branch --source=grub_wiz -m pytest
+  python3 -m coverage report
+  ```
 
 ## What Is Tested
 
@@ -139,6 +161,66 @@ check is patched. Covered behavior includes NUL-byte rejection, `sh -n`
 rejection, atomic replacement with a rollback copy, advisory
 `grub-script-check`, rollback plus update re-run on failure, and explicit
 critical reporting when rollback itself fails.
+
+### `test_grubwriter_commands.py`
+
+Covers the part of `GrubWriter` that the commit tests stub out: root and
+missing-command refusal, `update-grub` versus `grub-mkconfig -o`, command exit
+codes and `OSError`, initramfs trigger matching, `/boot` space calculations,
+the argv used for each distro's initramfs tool, advisory `grub-script-check`,
+and the commit error branches (rollback-copy failure, target-write failure,
+target that did not exist).
+
+### `test_param_discovery_internals.py`
+
+Covers `info grub` parsing and its length/`__` filters, all discovery states
+and execution failures, legacy/corrupt cache handling, the weekly staleness
+rule, manual enable/disable persistence, the 20% absent-ratio guard (including
+the single-probe exemption), and the module CLI.
+
+### `test_backup_restore.py`
+
+Pins the security contract of `restore_backup()`: non-root refusal, symlink
+rejection, NUL and command-substitution refusal, explicit destinations, atomic
+success, and write failures. Also covers checksum edge cases and backup
+inventory filtering.
+
+### `test_distro_vars.py`
+
+Drives startup resolution without inspecting the host: candidate order for
+paths and binaries, fatal missing `/etc/default/grub` and update command,
+crippled-mode confirmation (`y`, `n`, EOF), complete-system state, and custom
+initramfs triggers.
+
+### `test_canned_config_loading.py`
+
+Covers the reference copy, a valid `custom_config.yaml` becoming active, and
+fallbacks for invalid schema, unreadable/symlinked files, and malformed YAML.
+Also exercises `_process_config()` for bad regex specs, expert-edit sentinels,
+command-substitution opt-in, and non-dict sections.
+
+### `test_warn_db_persistence.py`
+
+Covers the legacy `warns:` format, corrupt/unreadable YAML, clean and dirty
+writes, write failures, and idempotent inhibit/un-inhibit.
+
+### `test_grubfile_branches.py`
+
+Covers duplicate assignments (last uncommented wins, earlier comment
+superseded), missing files, discovery-filtered and adopted parameters,
+guidance wrapping, write failures, and the quote/continuation helpers.
+
+### `test_main_helpers.py`
+
+Covers the non-curses helpers: cell-width measurement and truncation, diffs,
+enum/regex selection, activation defaults, activate/deactivate state,
+backup-tag normalization, startup backup decisions, and quoted enum lookup.
+
+### `test_cli_branches.py`
+
+Covers `--validate-custom-config`, `--factory-reset` (including partial
+failure), `--validator-demo`, and the `GrubCfgParser`/`DistroVars` module entry
+points.
 
 ## Test Data Files
 
