@@ -179,6 +179,9 @@ def test_reinit_runs_discovery_before_filtering(monkeypatch):
     class FakeValidator:
         """Validator whose warnings do not matter for this test."""
 
+        def bind_param_cfg(self, param_cfg):
+            """Accept the config rebuild performed by ``reinit_gw()``."""
+
         def make_warns(self, values):
             """Return no warnings."""
             return [], {}

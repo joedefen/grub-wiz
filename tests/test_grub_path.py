@@ -49,6 +49,8 @@ def test_reinit_gw_reads_the_distro_resolved_etc_grub(monkeypatch, tmp_path):
             self.extra_params = {}
 
         def read_file(self):
+            # The real GrubFile reads in its constructor; ``reinit_gw()`` must
+            # not read a second time (audit M11).
             seen['read_file'] = True
 
     class FakeValidator:
@@ -90,5 +92,5 @@ def test_reinit_gw_reads_the_distro_resolved_etc_grub(monkeypatch, tmp_path):
     gw.reinit_gw()
 
     assert seen['file_path'] == etc_grub
-    assert seen['read_file'] is True
+    assert 'read_file' not in seen
     assert gw.grub_file.param_data['GRUB_TIMEOUT'].value == GrubFile.ABSENT

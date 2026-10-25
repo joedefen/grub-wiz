@@ -10,6 +10,7 @@ r"""
 # pylint: disable=too-many-instance-attributes,too-many-lines
 
 
+import copy
 import sys
 import os
 import time
@@ -1230,7 +1231,14 @@ class GrubWiz:
         self.param_defaults = {}
         self.must_reviews = None
         self.ss = None
-        self.sections = self.canned_config.data
+        # Work on a private copy of the canned/custom config.  Reinit adds the
+        # "Unvalidated Params" section and merges probed GRUB menu entries into
+        # GRUB_DEFAULT.enums; doing that on ``canned_config.data`` itself left
+        # application state inside the loaded config and let a section built
+        # from the previous /etc/default/grub survive into the next one (audit
+        # M11).  A fresh copy per call also keeps the private '_...' sections
+        # available to whoever re-processes the config.
+        self.sections = copy.deepcopy(self.canned_config.data)
         section_names = list(self.sections.keys())
         for section_name in section_names:
             if section_name.startswith('_'):
@@ -1261,10 +1269,18 @@ class GrubWiz:
                               if self.distro_vars.update_initramfs else None)
             self.wiz_validator = WizValidator(self.param_cfg,
                                               initramfs_tool=initramfs_tool)
+        else:
+            # ``param_cfg`` above is a brand-new dict, so a validator created for
+            # the previous session would keep validating the old config after a
+            # restore or a write (audit M11).  Rebinding keeps its initramfs
+            # policy and disk-layout cache, neither of which depends on the
+            # config.
+            self.wiz_validator.bind_param_cfg(self.param_cfg)
 
+        # GrubFile reads the file in its constructor; calling read_file() again
+        # here duplicated the I/O and every parsing side effect (audit M11).
         self.grub_file = GrubFile(supported_params=self.param_cfg,
                                   file_path=self.distro_vars.etc_grub)
-        self.grub_file.read_file()
         if self.grub_file.extra_params:
             section_name = 'Unvalidated Params'
             extras = {}

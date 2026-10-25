@@ -39,6 +39,17 @@ class WizValidator:
         self.initramfs_tool = (os.path.basename(initramfs_tool)
                                if initramfs_tool else None)
 
+    def bind_param_cfg(self, param_cfg):
+        """Validate against ``param_cfg`` from now on.
+
+        ``GrubWiz.reinit_gw()`` rebuilds ``param_cfg`` as a new dict after a
+        restore or a write.  A validator created for the previous session kept
+        the old reference, so it validated the stale config (audit M11).
+        Rebinding is cheaper than a new instance and keeps the disk-layout
+        cache, which describes the machine rather than the config.
+        """
+        self.param_cfg = param_cfg
+
     @staticmethod
     def _walk_block_devices(devices):
         """Yield every device in an ``lsblk -J`` tree, including nested ones.
