@@ -34,14 +34,14 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | H6 | ✅ | [`reset_screen_stack()`](../grub_wiz/main.py:1074) rebuilds `gw.ss` and rebinds `spinner.stack` (and `stack.obj`) to it; restore and write both use it. Restore now checks `restore_backup()`'s return value and alerts without reinitializing on failure. [`tests/test_restore_stack.py`](test_restore_stack.py) covers the rebind and both restore outcomes. |
 | H7 | ✅ | [`GrubWiz.reinit_gw()`](../grub_wiz/main.py:1091) now calls [`ensure_discovered()`](../grub_wiz/ParamDiscovery.py:285) before filtering, so discovery runs at startup on a fresh install and whenever the cache is stale. [`save_params()`](../grub_wiz/ParamDiscovery.py:162) now refreshes the in-memory cache so the regenerated result is what `get_absent()` sees. [`tests/test_param_discovery.py`](test_param_discovery.py) covers fresh install, stale-cache refresh, once-per-process retry, and the `reinit_gw()` wiring. |
 | H4, H8 | ☐ | Unchanged. |
-| H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
+| H9 | ✅ | The editor now validates a whole-value shell grammar that allows plain GRUB values (`, = + : /`, etc.) and rejects splitting/expansion unless the parameter's `_re_specs_` entry opts into command substitution. Shipped enums/regexes were reconciled. |
 | M1–M5 | ☐ | Unchanged. |
 | M6 | ✅ | User detection now prefers `SUDO_UID`/`SUDO_GID`; `os.getlogin()` is a last resort only. |
 | M7 | ✅ | User state directory is `0700`; `warn-db.yaml` is `0600`; the generated template is written user-owned instead of `root:root`. |
 | M8–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
-Remaining P0 work is H8.
+No P0 items remain.
 
 ---
 
@@ -207,11 +207,13 @@ The README says parameters not present on the system are automatically removed. 
 
 Regression coverage is in [`tests/test_param_discovery.py`](test_param_discovery.py): a fresh install triggers discovery and feeds `get_absent()`, a stale `OK` cache is refreshed before filtering, a `NO_INFO` attempt is not repeated within one process, and `reinit_gw()` calls discovery before it removes unsupported parameters. `pytest -q` passes (74 tests).
 
-### H8. Destructive prompts default to “yes”
+### H8. Destructive prompts default to “yes” — ✅ FIXED
 
-[`really_wanna()`](../grub_wiz/main.py:1588) seeds the answer with `'y'` ([`main.py:1595`](../grub_wiz/main.py:1595)) and accepts any answer beginning with `y` ([`main.py:1600`](../grub_wiz/main.py:1600)). Pressing Enter therefore confirms restore, delete, and commit. For a safety tool, the safe default must be “no”, and destructive actions should require an explicit match, not a prefix.
+[`really_wanna()`](../grub_wiz/main.py:1670) seeded the answer with `'y'` and accepted any answer beginning with `y`. Pressing Enter therefore confirmed restore, delete, and commit. For a safety tool, the safe default must be “no”, and destructive actions should require an explicit match, not a prefix.
 
-### H9. Shell-token validation is simultaneously too strict and too permissive
+**Remediation:** the dialog now opens with an empty seed ([`main.py:1683`](../grub_wiz/main.py:1683)), so Enter submits an empty string, and confirmation requires the entire answer to equal `yes` ([`main.py:1687`](../grub_wiz/main.py:1687)) after stripping and lower-casing. `y`, `yeah`, `yess`, `yes!` and any other prefix are refusals, and Esc/`None` remains a refusal. The cost is one typed word for restore, delete, and commit; no second prompt or hold-to-confirm step was added. Regression coverage in [`tests/test_confirm_prompt.py`](test_confirm_prompt.py) asserts the seed is empty, that Enter/`None`/all prefixes refuse, that exact `yes` in any case or padding confirms, and that passthrough (search) mode is disengaged before the prompt.
+
+### H9. Shell-token validation is simultaneously too strict and too permissive — ✅ FIXED
 
 [`_is_valid_shell_token()`](../grub_wiz/main.py:1514):
 
@@ -219,6 +221,15 @@ Regression coverage is in [`tests/test_param_discovery.py`](test_param_discovery
 - Rejects valid unquoted GRUB values containing `,`, `=`, `+`, `:`, etc. because the fallback is `^[\w.-]+$` at [`main.py:1545`](../grub_wiz/main.py:1545).
 
 This conflicts with the shipped config: `GRUB_GFXMODE` supports `1024x768,auto` ([`canned_config.yaml:315`](../grub_wiz/canned_config.yaml:315)), `GRUB_EARLY_INITRD_LINUX_STOCK` supports space-separated unquoted values ([`canned_config.yaml:272`](../grub_wiz/canned_config.yaml:272)), and `re_theme_file` permits unquoted spaces ([`canned_config.yaml:117`](../grub_wiz/canned_config.yaml:117)). Users editing those values must add quotes that the enum path never required. Conversely, command substitution is accepted without assessing the trust boundary (see C1).
+
+**Remediation:** the ad-hoc token check is replaced by a small shell-value grammar, [`check_shell_value()`](../grub_wiz/main.py:1083), that models the actual boundary: the value is written verbatim as `PARAM=value` into a file that distro scripts *source*. The grammar:
+
+- accepts any bare value except the characters that change the assignment's meaning — whitespace, quotes, `\`, `$`, backticks, `; & | < > ( ) { } ! # ~` — so `1024x768,auto`, `net.ifnames=0`, `a+b:c=d`, and paths without spaces now work unquoted;
+- accepts single- and double-quoted strings, but rejects expansion and command substitution *inside* double quotes, which closes the old `"$(reboot)"` bypass;
+- accepts a whole-value `$(...)` or `` `...` `` command substitution only when the parameter's spec sets `allow_command_sub: true`. Only `re_quoted_or_command_sub` (used by `GRUB_DISTRIBUTOR`, whose default is `$(lsb_release -i -s)`) opts in; expert edit is an explicit administrator escape hatch that also permits it. The configured opt-in is the trust decision, and C1 already makes restore reject command substitution.
+- rejects control characters (newline, NUL) so a value cannot start a new line in the sourced file.
+
+The shipped config is reconciled with that grammar rather than papered over: `GRUB_EARLY_INITRD_LINUX_STOCK`'s multi-image enum is now quoted and its regex accepts the quoted form, `re_theme_file` accepts quoted paths containing spaces and unquoted paths without them, and `re_gfxmode` no longer allows a space after the comma. A space must be quoted because an unquoted one would make the shell treat the next word as a command; the enum values now follow the same rule as hand-edited values. Regression coverage in [`tests/test_shell_token.py`](test_shell_token.py) covers the accepted/rejected grammar, both edit paths, the opt-in boundary, double-quoted command substitution, and an invariant that every shipped enum is a safe shell value matching its own `edit_re`.
 
 ---
 
@@ -366,7 +377,7 @@ The tests pass (`20 passed`) but:
 9. Fix the extra-params merge in the compare screen (H5).
 10. Keep `spinner.stack` in sync when replacing `ScreenStack`; check restore return values (H6).
 11. ✅ Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
-12. Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
+12. ✅ Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
 13. Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
 14. Run `update-grub` after restore or clearly document the two-step behavior; check restore success (M15).
 15. Fix `EXPERT_EDIT`, `GrubCfgParser`, `demo()`, and `dump()` (M3–M5).
@@ -405,4 +416,5 @@ The tests pass (`20 passed`) but:
 - `pytest -q` — 49 passed.
 - Custom-config probe (H4): the packaged `canned_config.yaml` now passes `validate_schema()` unchanged, and an exact copy in a temporary user-config directory is selected as `using_path` with `edit_re` resolved against `_re_specs_` and `_distro_vars_` intact. [`tests/test_canned_config.py`](test_canned_config.py) also covers reserved metadata sections, runtime-only `edit_re_human`, malformed sections, and fallback to the packaged template. `pytest -q` — 64 passed.
 - Discovery probe (H7): [`tests/test_param_discovery.py`](test_param_discovery.py) injects a fake state directory and a fake `discover_params()`. It verifies that a missing cache is discovered on the first `ensure_discovered()`, that a one-week-old `OK` cache is regenerated and the regenerated set—not the stale in-memory snapshot—drives `get_absent()`, that a `NO_INFO` attempt is not repeated within a process, and that `GrubWiz.reinit_gw()` calls discovery before it drops unsupported parameters. `pytest -q` — 74 passed.
+- Shell-value probe (H9): `1024x768,auto` and paths without spaces pass unquoted; an unquoted space is refused with a quoting hint; `$(reboot)`, backticks and `"$(reboot)"` are refused by default; `$(lsb_release -i -s)` is accepted only for a parameter whose spec opted in (and by expert edit); every shipped enum passes [`check_shell_value()`](../grub_wiz/main.py:1083) and matches its own `edit_re`. `pytest -q` — 145 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.

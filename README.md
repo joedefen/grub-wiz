@@ -272,6 +272,7 @@ For advanced users who need to modify parameter definitions:
 - Use `grub-wiz --validate-custom-config` to test your changes
 - Top-level sections beginning with `_` (`_distro_vars_`, `_re_specs_`, `_update_initramfs_triggers_`) are reserved metadata. Keep them when copying the template: `_distro_vars_` tells `grub-wiz` where to find `/etc/default/grub` and the update commands.
 - Each `GRUB_*` entry requires `default`, `edit_re`, `enums`, and `guidance`. `edit_re_human` is generated at runtime from `_re_specs_`; do not add it.
+- Values are written into `/etc/default/grub`, which is sourced as a shell script, so a value with spaces or shell metacharacters must be quoted (for example `"quiet splash"`). Plain values such as `1024x768,auto` need no quotes. Command substitution is refused unless the regex spec in `_re_specs_` sets `allow_command_sub: true`; only `re_quoted_or_command_sub` (used by `GRUB_DISTRIBUTOR`) does so in the packaged template.
 - Consider submitting useful additions as GitHub issues/PRs!
 
 ---

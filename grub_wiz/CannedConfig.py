@@ -90,11 +90,18 @@ class CannedConfig:
                 try:
                     regex_lookup[re_name] = {
                         'pattern': re.compile(spec['re']),
-                        'human': spec.get('human', '')
+                        'human': spec.get('human', ''),
+                        # A spec may opt its parameters into accepting shell
+                        # command substitution (e.g. GRUB_DISTRIBUTOR).
+                        'allow_command_sub': bool(
+                            spec.get('allow_command_sub', False)),
                     }
                 except re.error as e:
                     print(f"WARNING: Invalid regex in _re_specs_.{re_name}: {e}")
-                    regex_lookup[re_name] = {'pattern': '', 'human': spec.get('human', '')}
+                    regex_lookup[re_name] = {
+                        'pattern': '', 'human': spec.get('human', ''),
+                        'allow_command_sub': False,
+                    }
 
         # Process each section and parameter
         for section_name, params in self.data.items():
@@ -117,6 +124,8 @@ class CannedConfig:
                             # Resolve to compiled pattern and add human description
                             cfg['edit_re'] = regex_lookup[edit_re]['pattern']
                             cfg['edit_re_human'] = regex_lookup[edit_re]['human']
+                            cfg['allow_command_sub'] = \
+                                regex_lookup[edit_re]['allow_command_sub']
                         else:
                             # It's an inline pattern (backward compatibility)
                             try:
@@ -126,15 +135,19 @@ class CannedConfig:
                                 print(f"WARNING: Invalid inline regex for {param_name}: {e}")
                                 cfg['edit_re'] = ''
                                 cfg['edit_re_human'] = ''
+                            cfg['allow_command_sub'] = False
                     elif edit_re in (EXPERT_EDIT, EXPERT_EDIT[0]):
                         # Keep EXPERT_EDIT as-is, add empty human description
                         cfg['edit_re_human'] = ''
+                        cfg['allow_command_sub'] = False
                     else:
                         # Unknown type, set empty
                         cfg['edit_re_human'] = ''
+                        cfg['allow_command_sub'] = False
                 else:
                     # Empty edit_re - add empty human description
                     cfg['edit_re_human'] = ''
+                    cfg['allow_command_sub'] = False
 
                 # Note: We don't pre-expand %ENUMS% here because it needs to be
                 # dynamic to show the current value marker in the UI

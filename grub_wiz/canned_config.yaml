@@ -76,6 +76,12 @@ _update_initramfs_triggers_:
 #         - value: meaning
 #       guidance: {text} # < detailed parameter help
 #
+#   A regex spec in _re_specs_ may set allow_command_sub: true to let its
+#   parameters accept a whole-value $(...) or `...` command substitution
+#   (needed for GRUB_DISTRIBUTOR).  Values must still be one shell word:
+#   whitespace, ';', '&', '|', '<', '>' and quotes require quoting because
+#   /etc/default/grub is sourced by the distro's shell scripts.
+#
 _re_specs_:
   re_quoted_image_file:
     re: (?i)^(''|""|['"].*\.(png|jpg|jpeg|tga|bmp)['"])?$
@@ -108,18 +114,19 @@ _re_specs_:
   re_quoted_or_command_sub:
     re: ^(".*"|'.*'|\$\(.*\)|`.*`)$
     human: "quoted string, $(command), or `command`"
+    allow_command_sub: true
 
   re_initrd_images:
-    re: ^([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?$
-    human: space-separated .img filenames or empty
+    re: ^("[\w\-./ ]+\.img"|'[\w\-./ ]+\.img'|([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?)$
+    human: space-separated .img filenames (quote multi-image lists) or empty
 
   re_theme_file:
-    re: (?i)^(''|""|.*theme\.txt)?$
-    human: path to theme.txt file or empty
+    re: (?i)^(''|""|"[\w\-./ ]*theme\.txt"|'[\w\-./ ]*theme\.txt'|[\w\-./]*theme\.txt)?$
+    human: path to theme.txt file (quote paths with spaces) or empty
 
   re_gfxmode:
-    re: ^(auto|keep|(?:[1-9]\d{2,3}x[1-9]\d{2,3}))(?:,\s*(?:auto|keep|[1-9]\d{2,3}x[1-9]\d{2,3}))*$
-    human: "'auto', 'keep', or comma separated WxH resolutions"
+    re: ^(auto|keep|(?:[1-9]\d{2,3}x[1-9]\d{2,3}))(?:,(?:auto|keep|[1-9]\d{2,3}x[1-9]\d{2,3}))*$
+    human: "'auto', 'keep', or comma-separated WxH resolutions (no spaces)"
 
   re_gfxpayload:
     re: ^(text|keep|[1-9]\d{2,3}x[1-9]\d{2,3})?$
@@ -269,11 +276,12 @@ Kernel Arguments:
       '': No early initrd (microcode updates disabled)
       'intel-ucode.img': Intel CPU microcode updates (Arch/Fedora)
       'amd-ucode.img': AMD CPU microcode updates (Arch/Fedora)
-      'intel-ucode.img amd-ucode.img': Both Intel and AMD microcode
+      '"intel-ucode.img amd-ucode.img"': Both Intel and AMD microcode
     guidance: "Early microcode initrd images loaded before main initrd.
       \n: Used primarily for CPU microcode updates on Arch, Fedora, and similar distros.
       \n: These are loaded very early in boot for security/stability fixes.
       \n: Space-separated list of .img files (relative to /boot).
+      \n: Multi-image lists must be quoted so the shell keeps them together.
       \n%ENUMS%"
 
 Visual Appearance:

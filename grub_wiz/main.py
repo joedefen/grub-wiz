@@ -1021,6 +1021,128 @@ class HelpScreen(GrubWizScreen):
         gw.spinner.show_help_body(win)
 
 
+# --- Shell-value validation for /etc/default/grub --------------------------
+#
+# A parameter value is written verbatim after ``PARAM=`` and the file is
+# *sourced* by the distro's GRUB scripts.  The value must therefore stay a
+# single shell word: spaces split the assignment (``PARAM=a reboot`` runs
+# ``reboot``), ``;``/``&``/``|`` chain commands, ``$``/backticks expand, and
+# ``#`` starts a comment.  Everything else that GRUB values commonly use
+# (``, = + : / @ %``, brackets, etc.) is fine unquoted.  Command substitution
+# is accepted only for parameters whose ``_re_specs_`` entry opts in with
+# ``allow_command_sub: true`` (GRUB_DISTRIBUTOR), or in expert-edit mode.
+
+#: Characters that are unsafe in a bare (unquoted) assignment value.
+_UNQUOTED_FORBIDDEN = frozenset(' \t\n\r\x0b\x0c\'"\\$`;&|<>(){}!#~')
+
+
+def _is_control_char(char):
+    """True for C0/DEL control characters, which must never be written."""
+    return ord(char) < 0x20 or ord(char) == 0x7f
+
+
+def _check_command_substitution(value):
+    """Validate a whole-value ``$(...)`` command substitution.
+
+    ``value`` starts with ``$(``.  Returns ``(ok, reason)``.  Quotes inside
+    the command are honoured so parentheses in quoted text do not disturb the
+    balance check, and the substitution must span the entire value.
+    """
+    depth = 0
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            elif char == '\\' and quote == '"':
+                escaped = True
+            continue
+        if char in ('"', "'"):
+            quote = char
+        elif char == '\\':
+            escaped = True
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth < 0:
+                return False, "unbalanced ')' in command substitution"
+            if depth == 0 and index != len(value) - 1:
+                return False, 'command substitution must be the whole value'
+    if quote:
+        return False, 'unterminated quote in command substitution'
+    if depth != 0:
+        return False, "unbalanced '(' in command substitution"
+    return True, ''
+
+
+def check_shell_value(value, allow_command_sub=False):
+    """Check that *value* can be written as ``PARAM=value`` safely.
+
+    Returns ``(ok, reason)``.  Accepted forms are an empty value, a bare word
+    without shell metacharacters, a single- or double-quoted string with no
+    expansions inside, and (only when *allow_command_sub* is true) a
+    whole-value ``$(...)`` or backtick command substitution.
+
+    Spaces, quotes and backslashes must be quoted because the shell would
+    otherwise split the assignment or change its meaning; this mirrors what
+    the file needs when edited by hand.
+    """
+    if not value:
+        return True, ''
+    if any(_is_control_char(char) for char in value):
+        return False, 'value contains a control character'
+
+    if value[0] == "'":
+        if len(value) < 2 or value[-1] != "'":
+            return False, "single-quoted value must end with '"
+        if "'" in value[1:-1]:
+            return False, "use \"'\\''\" to put a single quote inside '...'"
+        return True, ''
+
+    if value[0] == '"':
+        if len(value) < 2 or value[-1] != '"':
+            return False, 'double-quoted value must end with "'
+        inner = value[1:-1]
+        index = 0
+        while index < len(inner):
+            char = inner[index]
+            if char == '\\':
+                if index + 1 < len(inner) and inner[index + 1] in '\\"':
+                    index += 2
+                    continue
+                return False, 'only \\\\ and \\" are allowed inside "..."'
+            if char in '"$`':
+                return False, ('no expansion or command substitution inside '
+                               '"..."; use an unquoted $(...) if intended')
+            index += 1
+        return True, ''
+
+    if value.startswith('$('):
+        if not allow_command_sub:
+            return False, 'command substitution is not allowed for this parameter'
+        return _check_command_substitution(value)
+
+    if value[0] == '`':
+        if not allow_command_sub:
+            return False, 'command substitution is not allowed for this parameter'
+        if len(value) < 2 or value[-1] != '`':
+            return False, 'backtick command substitution must end with a backtick'
+        if '`' in value[1:-1]:
+            return False, 'backtick command substitution cannot contain a backtick'
+        return True, ''
+
+    forbidden = sorted(set(value) & _UNQUOTED_FORBIDDEN)
+    if forbidden:
+        shown = ' '.join(repr(char) for char in forbidden)
+        return False, f'quote the value; unquoted {shown} is interpreted by the shell'
+    return True, ''
+
+
 class GrubWiz:
     """ TBD """
     singleton = None
@@ -1562,11 +1684,17 @@ class GrubWiz:
                     win.flash('Invalid input - please try again', duration=1.5)
                     continue
 
-            # Also validate as shell token for safety (regexes can be permissive)
-            if value and not self._is_valid_shell_token(value):
+            # Then validate the shell boundary.  The value is written verbatim
+            # as `PARAM=value` in a file that distro scripts source, so it must
+            # stay one shell word; the regex above only checks GRUB semantics.
+            # Command substitution is allowed only when this parameter's
+            # config opts in (see _re_specs_.re_quoted_or_command_sub).
+            ok, reason = check_shell_value(
+                value, allow_command_sub=bool(cfg.get('allow_command_sub', False)))
+            if not ok:
                 valid = False
-                hint = 'must be valid shell token (check quoting)'
-                win.flash('Invalid shell token - check quoting', duration=1.5)
+                hint = f'must be a safe shell value ({reason})'
+                win.flash(f'Unsafe value - {reason}', duration=2.0)
 
         self.param_values[name] = value
 
@@ -1583,48 +1711,25 @@ class GrubWiz:
             if value is None: # aborted
                 return
 
-            # Minimal validation: ensure it's a safe shell token
-            # Allow: empty, unquoted word, single-quoted, or double-quoted
-            valid = True
-            if value and not self._is_valid_shell_token(value):
-                valid = False
-                hint = 'must be empty, word, or quoted string'
-                win.flash('Invalid shell token - check quoting', duration=1.5)
+            # Minimal validation: the value must still stay one shell word.
+            # Expert mode is an explicit administrator escape hatch, so a
+            # whole-value command substitution is accepted here.
+            ok, reason = check_shell_value(value, allow_command_sub=True)
+            valid = ok
+            if not ok:
+                hint = f'must be a safe shell value ({reason})'
+                win.flash(f'Unsafe value - {reason}', duration=2.0)
 
         self.param_values[name] = value
 
-    def _is_valid_shell_token(self, value):
-        """ Check if value is a valid shell token (minimal safety check) """
-        if not value:  # empty is valid
-            return True
+    def _is_valid_shell_token(self, value, allow_command_sub=False):
+        """Return True when *value* is safe as a shell assignment value.
 
-        # Single-quoted: everything between quotes is literal
-        if value.startswith("'") and value.endswith("'") and len(value) >= 2:
-            return "'" not in value[1:-1]  # Disallow single quotes inside
-
-        # Double-quoted: check for balanced quotes
-        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
-            # Basic check: allow escaped quotes, but no bare unescaped quotes inside
-            inner = value[1:-1]
-            # Replace escaped quotes, then check for any remaining unescaped quotes
-            check = inner.replace('\\"', '')
-            return '"' not in check
-
-        # Command substitution: $(...)
-        if value.startswith('$(') and value.endswith(')'):
-            # Basic check: has opening and closing parens
-            # We don't deeply validate the command itself
-            return True
-
-        # Command substitution: `...` (backtick style)
-        if value.startswith('`') and value.endswith('`') and len(value) >= 2:
-            # Allow backtick command substitution
-            # The shell will handle the validation
-            return True
-
-        # Unquoted word: only allow alphanumeric, underscore, hyphen, period
-        # Anything fancier (paths, spaces, special chars) must be quoted
-        return bool(re.match(r'^[\w.-]+$', value))
+        Thin wrapper around :func:`check_shell_value` kept for callers that
+        only need a boolean.
+        """
+        ok, _reason = check_shell_value(value, allow_command_sub)
+        return ok
 
 
     def refresh_backup_list(self):
@@ -1668,18 +1773,23 @@ class GrubWiz:
         self.grub_checksum = checksum # checksum of loaded grub
 
     def really_wanna(self, act):
-        """ TBD """
+        """ Ask for explicit confirmation before a destructive action.
+
+        The input starts empty, so Enter (or Esc) means "no": nothing is
+        destroyed by a stray keypress.  Confirmation requires the entire
+        answer to be ``yes`` (case/whitespace insensitive); ``y``, ``yeah``
+        and any other prefix or typo are treated as a refusal.
+        """
         # Ensure passthrough mode is off before prompting
         self.win.passthrough_mode = False
         # Flush input buffer to prevent stray keys from being processed
         cs.flushinp()
-        # Prompt user for confirmation
-        answer = self.win.answer(seed='y',
+        # Prompt user for confirmation; empty seed => Enter does not confirm
+        answer = self.win.answer(seed='',
                          prompt=f"Enter 'yes' to {act}", height=1)
         if answer is None:
             return False
-        answer = answer.strip().lower()
-        return answer.startswith('y')
+        return answer.strip().lower() == 'yes'
 
     def update_grub(self):
         """ TBD """
