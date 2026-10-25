@@ -91,7 +91,10 @@ def make_restore_screen(restore_ok):
         ordered_backup_pairs=[('DEADBEEF', target)],
         backups={'DEADBEEF': target},
         really_wanna=lambda _act: True,
-        backup_mgr=SimpleNamespace(restore_backup=lambda _path: restore_ok),
+        backup_mgr=SimpleNamespace(
+            target_path=Path('/etc/default/grub'),
+            restore_backup=lambda _path: restore_ok,
+        ),
         navigate_back=lambda: False,
         reinit_gw=lambda: calls.append('reinit'),
         reset_screen_stack=lambda: calls.append('reset'),
@@ -117,8 +120,26 @@ def test_failed_restore_does_not_reinitialize():
 
 def test_successful_restore_rebuilds_with_fresh_stack():
     """A successful restore reinitializes and rebinds the stack exactly once."""
-    screen, _win, calls = make_restore_screen(restore_ok=True)
+    screen, win, calls = make_restore_screen(restore_ok=True)
 
     screen.restore_ACTION()
 
     assert calls == ['reinit', 'reset', 'startup']
+
+
+def test_successful_restore_explains_two_step_behavior():
+    """Restoring only changes the source; the user must write to activate it.
+
+    Restore intentionally does not run update-grub (audit M15).  The notice
+    must say that grub.cfg has not been regenerated so the returned main
+    screen is not mistaken for an active configuration.
+    """
+    screen, win, _calls = make_restore_screen(restore_ok=True)
+
+    screen.restore_ACTION()
+
+    assert len(win.alerts) == 1
+    notice = win.alerts[0]
+    assert "'20990101-000000-DEADBEEF.custom.bak' restored" in notice
+    assert 'grub.cfg has NOT been regenerated' in notice
+    assert 'Write the configuration' in notice

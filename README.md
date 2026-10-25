@@ -172,7 +172,7 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
  - if there are no backup files, on startup `grub-wiz` automatically creates one with tag='orig'
  - if there are backup files and none match the current `/etc/default/grub`, `grub-wiz` prompts you for a tag for its backup (you may decline).
  - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters (spaces will be converted to "-" characters)
- - if a backup is restored, `grub-wiz` re-initializes using restored grub file and returns to main screen
+ - if a backup is restored, `grub-wiz` re-initializes using the restored grub file and returns to the main screen. **Restore is intentionally a two-step operation:** it replaces `/etc/default/grub` but does *not* regenerate `grub.cfg`. The restored values become active only when you write from the main screen, which runs the normal atomic write and `update-grub` path. This lets you restore an older configuration as a baseline for further edits without changing the current boot menu in the middle of the session.
  - the `[v]iew` action bring up the VIEW screen to peruse the selected `.bak` file.
  - the `[c]mp` action compares the selected `.bak` to the `CMP` (or baseline) `.bak`, and you can set the `baseline` with the `[b]aseline` action. And example the COMPARE screen is below.  As you can see, it just show the parameter values difference, not different comments or blank lines or whatnot.
 ```

@@ -46,7 +46,8 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M10 | ✅ | [`DEFAULT_ETC_GRUB`](../grub_wiz/DistroVars.py:17) is the single constant; [`GrubFile.std_location`](../grub_wiz/GrubFile.py:54) and [`BackupMgr.GRUB_DEFAULT_PATH`](../grub_wiz/BackupMgr.py:19) derive from it. [`reinit_gw()`](../grub_wiz/main.py:1274) passes `DistroVars.etc_grub` to `GrubFile`, and `BackupMgr` is built with the same resolved target. |
 | M11 | ✅ | [`reinit_gw()`](../grub_wiz/main.py:1226) rebinds the validator to the rebuilt `param_cfg` through [`WizValidator.bind_param_cfg()`](../grub_wiz/WizValidator.py:42), works on a private deep copy of the config so `canned_config.data` is never mutated, and no longer calls `read_file()` a second time. |
 | M12 | ✅ | [`save_params()`](../grub_wiz/ParamDiscovery.py:162) refreshes `cached_data` after the atomic write, so a forced regeneration is visible to `load_cached_data()`/`get_absent()` in the same process (also documented under H7). |
-| M13, M15 | ☐ | Unchanged. |
+| M13 | ☐ | Unchanged. |
+| M15 | ✅ | Restore stays intentionally source-only: it replaces `/etc/default/grub` and reloads the screens but does not run `update-grub`. The two-step behavior is documented in [`restore_ACTION()`](../grub_wiz/main.py:699), announced in a post-restore notice, and described in [`README.md`](../README.md:175). |
 | M14 | ✅ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses; LEFT/RIGHT are taken per window through `ConsoleWindowOpts(taken_nav_keys=...)` on `console-window==2.0.2`, so the library's `NAVIGATION_KEYS` is no longer mutated. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
@@ -333,7 +334,7 @@ The tests pass (`20 passed`) but:
 - No tests cover [`GrubWriter`](../grub_wiz/GrubWriter.py:16), [`BackupMgr`](../grub_wiz/BackupMgr.py:28), [`WarnDB`](../grub_wiz/WarnDB.py:18), [`ParamDiscovery`](../grub_wiz/ParamDiscovery.py:38), [`CannedConfig`](../grub_wiz/CannedConfig.py:14), [`UserConfigDir`](../grub_wiz/UserConfigDir.py:16), CLI parsing, or the TUI. The most safety-critical path has zero tests.
 - No CI configuration, pytest configuration, lint/type configuration, coverage, or dev dependency group exists.
 
-### M14. Packaging and dependency drift
+### M14. Packaging and dependency drift — ✅ FIXED
 
 - Exact pin [`console-window==2.0.2`](../pyproject.toml:20) combined with monkeypatching its internal `NAVIGATION_KEYS` at [`main.py:40`](../grub_wiz/main.py:40) was highly version-coupled. The exact pin is deliberate policy — grub-wiz validates against one reviewed release, and the library owner may change its API between releases — but reaching into a module-level mutable set was not part of that policy. The latest commit message says “nailed the version of ConsoleWindow 3.1.2”, while the working tree pins 2.0.2 and earlier commits pinned 1.3.2 and 2.0.1.
 - Topic classifier [`Topic :: Multimedia :: Video`](../pyproject.toml:25) is unrelated and misleading.
@@ -345,9 +346,11 @@ The tests pass (`20 passed`) but:
 
 The `NAVIGATION_KEYS` monkeypatch is gone. `console-window` 2.0.2 adds `ConsoleWindowOpts(taken_nav_keys={key: label})`, which subtracts keys from *that window's* navigation set (`opts.nav_keys`), prints the app's label in the navigation help, and leaves `NAVIGATION_KEYS` untouched for every other window. grub-wiz declares its two bindings in [`TAKEN_NAV_KEYS`](../grub_wiz/main.py:45), passes them at construction in [`setup_win()`](../grub_wiz/main.py:1319), and gives the spinner the same effective set so `add_key()` still rejects genuine navigation keys while accepting LEFT/RIGHT ([`main.py:1370`](../grub_wiz/main.py:1370)). Regression coverage in [`tests/test_nav_keys.py`](test_nav_keys.py) asserts that importing and configuring grub-wiz does not mutate the library's set, that vertical navigation survives, that the spinner accepts the taken keys and still rejects `KEY_DOWN`, and that the help screen credits LEFT/RIGHT to the app instead of advertising them as navigation.
 
-### M15. Restore does not make the restored configuration effective
+### M15. Restore does not make the restored configuration effective — ✅ FIXED (INTENTIONAL, NOW DOCUMENTED)
 
-[`restore_ACTION()`](../grub_wiz/main.py:661) copies the backup and reinitializes, but never invokes `run_grub_update()`. The user is returned to the main screen with `/etc/default/grub` restored but `grub.cfg` still generated from the old settings. This may be intentional (“restore source then write”), but it is not stated clearly and is surprising for a “restore” action.
+[`restore_ACTION()`](../grub_wiz/main.py:699) copies the backup and reinitializes, but never invokes `run_grub_update()`. The user is returned to the main screen with `/etc/default/grub` restored but `grub.cfg` still generated from the old settings. This is intentional (“restore source then write”): restoring a backup may be used as a baseline for new changes without the boot-menu/initramfs/reboot churn of a write. The original finding was that this behavior was not stated clearly.
+
+**Remediation:** The contract is now explicit. [`restore_ACTION()`](../grub_wiz/main.py:699) documents the two-step behavior, shows a post-restore notice stating that `grub.cfg` was not regenerated and that a write activates the restored settings, and the RESTORE SCREEN section of [`README.md`](../README.md:175) describes the same workflow.
 
 ---
 
@@ -412,7 +415,7 @@ The `NAVIGATION_KEYS` monkeypatch is gone. `console-window` 2.0.2 adds `ConsoleW
 11. ✅ Wire `get_system_params()` into startup or remove the documented automatic-discovery claim (H7).
 12. ✅ Fix the shell-token validator and reconcile it with the shipped regexes/enums (H9).
 13. ✅ Fix the dead quoting/distributor rules and the stale `bad` loop variable (M1, M2).
-14. Run `update-grub` after restore or clearly document the two-step behavior; check restore success (M15).
+14. ✅ Keep restore intentionally source-only and clearly document the two-step behavior; check restore success (M15).
 15. ✅ Fix `EXPERT_EDIT` (M3), `GrubCfgParser` (M4), and `demo()`/`dump()` (M5).
 
 **P2 — hardening, testing, and maintainability**
@@ -452,5 +455,6 @@ The `NAVIGATION_KEYS` monkeypatch is gone. `console-window` 2.0.2 adds `ConsoleW
 - Shell-value probe (H9): `1024x768,auto` and paths without spaces pass unquoted; an unquoted space is refused with a quoting hint; `$(reboot)`, backticks and `"$(reboot)"` are refused by default; `$(lsb_release -i -s)` is accepted only for a parameter whose spec opted in (and by expert edit); every shipped enum passes [`check_shell_value()`](../grub_wiz/main.py:1083) and matches its own `edit_re`. `pytest -q` — 145 passed.
 - Sentinel/path probe (M9–M10): assigning `ABSENT` to an existing parameter or to an absent one produces no sentinel and no exception (also under `-O`, since there is no `assert`); activating `GRUB_TERMINAL` writes `console`, not `#comment`; `GrubFile.std_location`, `BackupMgr.GRUB_DEFAULT_PATH`, and `DistroVars.default_yaml` share `DEFAULT_ETC_GRUB`; `reinit_gw()` passes `DistroVars.etc_grub` to `GrubFile`. `pytest -q` — 178 passed.
 - Validator probe (M1–M2): an unquoted `GRUB_CMDLINE_LINUX='rd.luks.uuid=abc rd.lvm.vg=test'` now warns while the double- and single-quoted forms and `foo="a b"` do not; `GRUB_DISTRIBUTOR` warns for ABSENT, COMMENT, `''`, `'""'` and whitespace-only, and does not warn for a plain name or a `$(...)`/backtick command. Enum ordering probes show a warning only on the parameter whose value is actually invalid. `EXPERT_EDIT` is a `str`, `has_edit_regex(EXPERT_EDIT)` is `False`, and an adopted `GrubFile` parameter carries the string sentinel. `pytest -q` — 151 passed.
+- Restore-contract probe (M15): a successful restore raises a notice naming the backup and destination, stating that `grub.cfg` was not regenerated and that a write activates the restored settings; the failed-restore path still alerts without reinitializing. [`tests/test_restore_stack.py`](test_restore_stack.py) covers both. `pytest -q` — 192 passed.
 - Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.
 

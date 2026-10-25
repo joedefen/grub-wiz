@@ -697,7 +697,17 @@ class RestoreScreen(GrubWizScreen):
                     compare_screen.bak2 = ref_path
 
     def restore_ACTION(self):
-        """Handle 'r' key on RESTORE screen - restore selected backup"""
+        """Handle 'r' key on RESTORE screen - restore selected backup.
+
+        Restore is deliberately the first half of a two-step operation: it
+        replaces the GRUB *source* file (the backup manager's target, normally
+        ``/etc/default/grub``) and reloads the screens from it, but it does
+        **not** run ``update-grub``.  The restored settings become active only
+        when the user later writes the configuration.  That is intentional:
+        a backup can be restored as a baseline for further edits without
+        regenerating ``grub.cfg`` mid-session (and without the initramfs or
+        reboot churn a write can trigger).
+        """
         gw = self.gw
         idx = self.win.pick_pos
         if not 0 <= idx < len(gw.ordered_backup_pairs):
@@ -712,6 +722,13 @@ class RestoreScreen(GrubWizScreen):
         if not gw.backup_mgr.restore_backup(gw.backups[key]):
             self.win.alert(message=f'ERR: restore of {target.name!r} failed')
             return
+        # State the intentional two-step behavior at the moment it matters.
+        # The screens now show the restored values, but grub.cfg still comes
+        # from the old configuration until a write runs update-grub (audit M15).
+        self.win.alert(message=(
+            f'{target.name!r} restored to {gw.backup_mgr.target_path}.\n'
+            'grub.cfg has NOT been regenerated.  Write the configuration '
+            'when you want the restored settings to become active.'))
         while gw.navigate_back():
             pass
         gw.reinit_gw()
