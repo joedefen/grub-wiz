@@ -25,6 +25,11 @@ classifiers = [
     "Topic :: Multimedia :: Video",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/joedefen/grub-wiz"
 
@@ -33,4 +38,10 @@ text = "MIT"
 
 [project.scripts]
 grub-wiz = "grub_wiz.main:main"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
 

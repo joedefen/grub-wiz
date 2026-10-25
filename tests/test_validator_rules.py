@@ -26,6 +26,9 @@ from grub_wiz.GrubFile import GrubFile
 class TestHelper:
     """Helper class for running validation tests."""
 
+    # Prevent pytest from trying to collect this helper as a test class.
+    __test__ = False
+
     def __init__(self):
         # Minimal param_cfg for testing
         self.param_cfg = {
@@ -66,9 +69,16 @@ class TestHelper:
         """
         validator = WizValidator(self.param_cfg)
 
-        # Mock the disk layout if provided
-        if layout is not None:
-            validator._disk_layout_cache = layout
+        # Never probe the host: default to a plain single-OS layout and let
+        # each test case override it.  This keeps the suite hermetic and
+        # deterministic across developer machines and CI runners.
+        if layout is None:
+            layout = SimpleNamespace(
+                has_another_os=False,
+                is_luks_active=False,
+                is_lvm_active=False,
+            )
+        validator._disk_layout_cache = layout
 
         # Add default absent values for all params not in config
         vals = {param: GrubFile.ABSENT for param in self.param_cfg.keys()}
@@ -78,27 +88,24 @@ class TestHelper:
 
         has_warnings = len(warns) > 0
 
+        failure = None
         if should_warn:
             if not has_warnings:
-                print(f"   ✗ FAIL: {test_name}")
-                print(f"      Expected warnings but got none")
-                print(f"      Config: {config}")
-                return False
-            if expected_param and expected_param not in warns:
-                print(f"   ✗ FAIL: {test_name}")
-                print(f"      Expected warning on {expected_param} but got warnings on: {list(warns.keys())}")
-                print(f"      Config: {config}")
-                return False
-            print(f"   ✓ PASS: {test_name}")
-            return True
-        else:
-            if has_warnings:
-                print(f"   ✗ FAIL: {test_name}")
-                print(f"      Expected no warnings but got: {warns}")
-                print(f"      Config: {config}")
-                return False
-            print(f"   ✓ PASS: {test_name}")
-            return True
+                failure = 'Expected warnings but got none'
+            elif expected_param and expected_param not in warns:
+                failure = (f'Expected warning on {expected_param} but got '
+                           f'warnings on: {list(warns.keys())}')
+        elif has_warnings:
+            failure = f'Expected no warnings but got: {warns}'
+
+        if failure:
+            print(f"   ✗ FAIL: {test_name}")
+            print(f"      {failure}")
+            print(f"      Config: {config}")
+            raise AssertionError(f"{test_name}: {failure}")
+
+        print(f"   ✓ PASS: {test_name}")
+        return True
 
 
 def test_default_saved_vs_savedefault():
@@ -142,7 +149,6 @@ def test_default_saved_vs_savedefault():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_timeout_zero_hidden():
@@ -182,7 +188,6 @@ def test_timeout_zero_hidden():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_splash_quiet_rhgb():
@@ -229,7 +234,6 @@ def test_splash_quiet_rhgb():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_recovery_cmdline_vs_disable():
@@ -273,7 +277,6 @@ def test_recovery_cmdline_vs_disable():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_luks_detection():
@@ -322,7 +325,6 @@ def test_luks_detection():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_lvm_detection():
@@ -369,7 +371,6 @@ def test_lvm_detection():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_cryptodisk_without_luks():
@@ -419,7 +420,6 @@ def test_cryptodisk_without_luks():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_uuid_disabled():
@@ -459,7 +459,6 @@ def test_uuid_disabled():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_terminal_serial():
@@ -516,7 +515,6 @@ def test_terminal_serial():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_terminal_graphical():
@@ -558,7 +556,6 @@ def test_terminal_graphical():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_savedefault_numeric():
@@ -600,7 +597,6 @@ def test_savedefault_numeric():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_cmdline_quoting():
@@ -636,7 +632,6 @@ def test_cmdline_quoting():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_os_prober():
@@ -685,7 +680,6 @@ def test_os_prober():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_timeout_limits():
@@ -727,7 +721,6 @@ def test_timeout_limits():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_gfxmode_values():
@@ -769,7 +762,6 @@ def test_gfxmode_values():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def test_enum_validation():
@@ -805,7 +797,6 @@ def test_enum_validation():
             passed += 1
 
     print(f"\nPassed: {passed}/{total}")
-    return passed == total
 
 
 def main():
@@ -833,23 +824,29 @@ def main():
         test_enum_validation,
     ]
 
-    passed_tests = 0
+    failed_tests = []
     total_tests = len(all_tests)
 
     for test_func in all_tests:
-        if test_func():
-            passed_tests += 1
+        try:
+            test_func()
+        except AssertionError as exc:
+            failed_tests.append((test_func.__name__, str(exc)))
+
+    passed_tests = total_tests - len(failed_tests)
 
     print("\n" + "=" * 70)
     print(f"OVERALL RESULTS: {passed_tests}/{total_tests} test suites passed")
     print("=" * 70)
 
-    if passed_tests == total_tests:
+    if not failed_tests:
         print("\n✓ All tests PASSED!")
         return 0
-    else:
-        print(f"\n✗ {total_tests - passed_tests} test suite(s) FAILED")
-        return 1
+
+    for name, message in failed_tests:
+        print(f"✗ {name}: {message}")
+    print(f"\n✗ {len(failed_tests)} test suite(s) FAILED")
+    return 1
 
 
 if __name__ == '__main__':

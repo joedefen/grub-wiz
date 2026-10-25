@@ -6,27 +6,34 @@ This directory contains regression tests for the `grub-wiz` project.
 
 ```
 tests/
-├── README.md                      # This file
-├── test_grubfile_parsing.py      # Test suite for GrubFile parsing
-├── test_validator_rules.py       # Comprehensive test suite for WizValidator rules
-└── test_data/                    # Test GRUB configuration files
-    ├── continuation_and_expansion.conf  # Tests continuation lines and variable expansion
-    └── edge_cases.conf                  # Tests edge cases and corner conditions
+├── README.md                          # This file
+├── test_grubfile_parsing.py          # Test suite for GrubFile parsing
+├── test_validator_rules.py           # Comprehensive test suite for WizValidator rules
+├── test_grubwriter_commit.py         # Hermetic commit/rollback tests for GrubWriter
+├── test_data/                        # Test GRUB configuration files
+│   ├── continuation_and_expansion.conf
+│   └── edge_cases.conf
+└── sample_grub_configs/              # Real-world sample /etc/default/grub files
 ```
 
 ## Running Tests
 
-From the project root directory:
+From the project root directory, with the package and dev dependencies
+installed:
 
 ```bash
-# Run GrubFile parsing tests
+# Recommended: install the package plus test dependencies, then run pytest
+python3 -m pip install -e ".[dev]"
+python3 -m pytest
+```
+
+The same suite can also be run without installation (pytest discovers the
+package via `pythonpath = ["."]` in `pyproject.toml`). The individual scripts
+remain runnable for debugging:
+
+```bash
 python3 tests/test_grubfile_parsing.py
-
-# Run WizValidator rule tests
 python3 tests/test_validator_rules.py
-
-# Or run all tests
-python3 tests/test_grubfile_parsing.py && python3 tests/test_validator_rules.py
 ```
 
 Or make them executable and run directly:
@@ -36,6 +43,20 @@ chmod +x tests/*.py
 ./tests/test_grubfile_parsing.py
 ./tests/test_validator_rules.py
 ```
+
+## Continuous Integration
+
+GitHub Actions runs the suite on every push to `main`/`dev` and on every pull
+request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
+
+- Python 3.12 and 3.13 are tested on `ubuntu-latest` (3.12 is the real minimum
+  for the current syntax; audit item C3 is still open).
+- The workflow installs `.[dev]`, byte-compiles the sources, runs `pytest`, and
+  separately builds a wheel to catch packaging regressions.
+- The validator tests never call `lsblk`/`efibootmgr`; they inject a fixed
+  disk-layout object, so results do not depend on the runner's hardware.
+- Coverage is intentionally not gated yet; the remaining audit findings should
+  be addressed first.
 
 ## What Is Tested
 
@@ -106,6 +127,16 @@ The test suite revealed and documents:
 - **"false" vs "not-true" logic** - Some rules check explicit false, others check absence of true
 - **Multiple rule interactions** - Tests avoid triggering unrelated rules (e.g., avoiding "quiet" in CMDLINE_LINUX tests)
 - **Known issues** - Documents a bug in the quoting validation logic (TODO to fix)
+
+### `test_grubwriter_commit.py`
+
+Hermetic tests for the `GrubWriter` commit/rollback path (audit item C2). They
+never touch `/etc/default/grub` or real user/system state directories: the
+`UserConfigDir` dependency is replaced with an in-memory fake and the root
+check is patched. Covered behavior includes NUL-byte rejection, `sh -n`
+rejection, atomic replacement with a rollback copy, advisory
+`grub-script-check`, rollback plus update re-run on failure, and explicit
+critical reporting when rollback itself fails.
 
 ## Test Data Files
 
