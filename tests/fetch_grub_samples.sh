@@ -13,16 +13,19 @@ fetch_grub() {
     local name=$1
     shift
     local urls=("$@")
-    # Generate random 8-char hex checksum for uniqueness
-    local checksum=$(echo "$name-$RANDOM" | md5sum | cut -c1-8 | tr '[:lower:]' '[:upper:]')
-    local output="$OUTPUT_DIR/29991213-000000-${checksum}.${name}.bak"
+    # Download under a temporary name; the checksum in the final name must be
+    # derived from the downloaded content, not from the download attempt.
+    local tmp="$OUTPUT_DIR/.${name}.tmp"
 
     echo -n "[$name] ... "
 
     for url in "${urls[@]}"; do
-        if curl -sSfL --max-time 10 "$url" -o "$output" 2>/dev/null; then
+        if curl -sSfL --max-time 10 "$url" -o "$tmp" 2>/dev/null; then
             # Verify it looks like a grub config
-            if grep -q "GRUB_" "$output" 2>/dev/null; then
+            if grep -q "GRUB_" "$tmp" 2>/dev/null; then
+                local checksum
+                checksum=$(sha256sum "$tmp" | cut -c1-8 | tr '[:lower:]' '[:upper:]')
+                mv -f "$tmp" "$OUTPUT_DIR/29991213-000000-${checksum}.${name}.bak"
                 echo "✓ got it"
                 return 0
             fi
@@ -30,7 +33,7 @@ fetch_grub() {
     done
 
     echo "✗ failed"
-    rm -f "$output"
+    rm -f "$tmp"
     return 1
 }
 

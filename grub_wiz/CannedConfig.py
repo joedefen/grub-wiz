@@ -206,11 +206,13 @@ class CannedConfig:
                 # Check required fields exist (edit_re_human is runtime-only)
                 missing = self.required_cfg_keys - set(cfg)
                 if missing:
-                    return f'Param ({param_name!r} dict missing keys: {sorted(missing)}'
+                    return (f'Param ({param_name!r}) dict missing keys: '
+                            f'{sorted(missing)}')
                 # Check no extra fields (strict)
                 extra = set(cfg.keys()) - allowed_keys
                 if extra:
-                    return f'Param ({param_name!r} dict extra keys: {sorted(extra)}'
+                    return (f'Param ({param_name!r}) dict extra keys: '
+                            f'{sorted(extra)}')
         return None
 
     def dump(self):

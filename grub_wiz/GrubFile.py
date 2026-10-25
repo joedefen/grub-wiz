@@ -161,18 +161,15 @@ class GrubFile:
                 i += 1
                 continue
 
-            # Extract the part after the first = sign
-            try:
-                equals_parts = line.split('=', 1)
-                if len(equals_parts) < 2:
-                    i += 1
-                    continue
-                value_part = equals_parts[1].rstrip()
-                # Check if value starts with " and ends with \
-                if not (value_part.startswith('"') and value_part.endswith('\\')):
-                    i += 1
-                    continue
-            except Exception:
+            # Extract the part after the first = sign.  str.split() cannot
+            # fail here, so a bare ``except:`` only hid real bugs (audit).
+            equals_parts = line.split('=', 1)
+            if len(equals_parts) < 2:
+                i += 1
+                continue
+            value_part = equals_parts[1].rstrip()
+            # Check if value starts with " and ends with \
+            if not (value_part.startswith('"') and value_part.endswith('\\')):
                 i += 1
                 continue
 
@@ -245,6 +242,16 @@ class GrubFile:
 
     def read_file(self):
         """Reads the GRUB file and populates the internal data structures."""
+        # A re-read must start from a clean parsing state.  Without this, the
+        # blacklist and adopted extra parameters of the previous read survived
+        # (audit), so a parameter that no longer uses expansion stayed hidden
+        # and stale unvalidated params lingered in ``supported_params``.
+        self.blacklisted_params.clear()
+        for param in self.extra_params:
+            self.supported_params.pop(param, None)
+        self.extra_params.clear()
+        self.param_data = {}
+
         try:
             with open(self.file_path, 'r', encoding='utf-8') as f:
                 self.lines = f.readlines()

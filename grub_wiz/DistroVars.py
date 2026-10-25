@@ -143,7 +143,12 @@ class DistroVars:
 
             print("\ngrub-wiz can continue in \033[1m'Crippled'\033[0m mode with limited features:")
             print("  - GRUB_DEFAULT menu entry enumeration will be unavailable")
-            choice = input("Continue anyway? [y/N]: ").strip().lower()
+            try:
+                choice = input("Continue anyway? [y/N]: ").strip().lower()
+            except EOFError:
+                # No stdin to confirm on (cron, pipeline, closed terminal):
+                # treat it as the safe default, which is to abort.
+                choice = ''
 
             if choice != 'y':
                 print("Aborting.")

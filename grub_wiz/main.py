@@ -13,6 +13,7 @@ r"""
 import copy
 import sys
 import os
+import subprocess
 import time
 import textwrap
 import traceback
@@ -760,7 +761,13 @@ class RestoreScreen(GrubWizScreen):
             if tag:
                 new_name = re.sub(r'[^.]+\.bak$', f'{tag}.bak', chosen.name)
                 new_path = chosen.parent / new_name
-                if new_path != chosen:
+                # os.rename() silently replaces an existing destination on
+                # POSIX, which would destroy another backup when a tag is
+                # reused.  Refuse instead.
+                if new_path != chosen and os.path.lexists(new_path):
+                    self.win.alert(
+                        message=f'ERR: {new_path.name} already exists')
+                elif new_path != chosen:
                     try:
                         os.rename(chosen, new_path)
                     except Exception as exce:
@@ -1170,6 +1177,20 @@ def check_shell_value(value, allow_command_sub=False):
     return True, ''
 
 
+def prompt_line(prompt: str, default: str = '') -> str:
+    """``input()`` that survives a closed or non-interactive stdin.
+
+    The post-commit prompts run after curses has been stopped, so they can be
+    reached from a pipeline or a terminal that is no longer readable.  There
+    ``input()`` raises EOFError and would abort the update path with a
+    traceback; EOF is treated as the caller's default (normally "no").
+    """
+    try:
+        return input(prompt)
+    except EOFError:
+        return default
+
+
 class GrubWiz:
     """ TBD """
     singleton = None
@@ -1178,7 +1199,7 @@ class GrubWiz:
     long_params = ('GRUB_CMDLINE_LINUX GRUB_CMDLINE_LINUX_DEFAULT'
             ' GRUB_CMDLINE_XEN_DEFAULT GRUB_BADRAM GRUB_PRELOAD_MODULES'
             ' GRUB_SERIAL_COMMAND GRUB_GFXMODE GRUB_THEME GRUB_BACKGROUND'
-            ' GRUB_TERMINAL_INPUT / GRUB_TERMINAL_OUTPUT').split()
+            ' GRUB_TERMINAL_INPUT GRUB_TERMINAL_OUTPUT').split()
 
     def __init__(self, cli_opts=None):
         GrubWiz.singleton = self
@@ -1609,7 +1630,8 @@ class GrubWiz:
             if value not in (GrubFile.COMMENT, GrubFile.ABSENT):
                 return True
             return False
-        return True # or False is better?
+        # A parameter with no known value is not an active parameter.
+        return False
 
     #: Config ``default`` values that are documentation sentinels rather than
     #: writable values.  ``GRUB_TERMINAL`` historically shipped
@@ -1822,15 +1844,20 @@ class GrubWiz:
          automatically """
         regex = r'^[-_A-Za-z0-9]+$'
         hint = f'regex={regex}'
+        prompt_text = prompt
         while True:
             answer = self.win.answer(seed=seed,
-                        prompt=f"{prompt} [{hint}]]", height=1)
+                        prompt=f"{prompt_text} [{hint}]", height=1)
             if answer is None:
                 return None
             answer = answer.strip()
             answer = re.sub(r'[-\s]+', '-', answer)
             if re.match(regex, answer):
                 return answer
+            # Say why the prompt is being repeated and keep the bad input
+            # editable instead of silently asking again.
+            prompt_text = f'Invalid tag; {prompt}'
+            seed = answer
 
     def do_start_up_backup(self):
         """ On startup
@@ -1931,7 +1958,8 @@ class GrubWiz:
                     print("\nSkipping initramfs rebuild for safety.")
                 elif not space_info['is_sufficient']:
                     print("\n⚠️  Space is tight. Proceeding is risky but may work.")
-                    choice = input('Continue with rebuild anyway? [y/N]: ').strip().lower()
+                    choice = prompt_line(
+                        'Continue with rebuild anyway? [y/N]: ').strip().lower()
                     if choice != 'y':
                         print('\nSkipping initramfs rebuild.')
                         print('Note: Some changes may not take effect until initramfs is rebuilt.')
@@ -1944,7 +1972,8 @@ class GrubWiz:
                             print('Your GRUB changes are applied, but initramfs was not rebuilt.')
                 else:
                     # Sufficient space, normal prompt
-                    choice = input('\nRebuild initramfs now? [y/N]: ').strip().lower()
+                    choice = prompt_line(
+                        '\nRebuild initramfs now? [y/N]: ').strip().lower()
                     if choice == 'y':
                         initramfs_ok, initramfs_msg = self.grub_writer.run_initramfs_update()
                         if initramfs_ok:
@@ -1958,9 +1987,9 @@ class GrubWiz:
                         print('Note: Some changes may not take effect until initramfs is rebuilt.')
 
         if ok:
-            os.system('\n\necho "OK ... /etc/default/grub newly written/updated"')
+            print('\nOK ... /etc/default/grub newly written/updated')
         else:
-            os.system('\n\necho "FAIL ... changes NOT applied (previous /etc/default/grub kept)"')
+            print('\nFAIL ... changes NOT applied (previous /etc/default/grub kept)')
         print('\n\nChoose:')
         if ok:
             print('  [r]eboot now')
@@ -1968,15 +1997,15 @@ class GrubWiz:
         print('  [q]uit')
         print('  ENTER to return to grub-wiz screen')
 
-        choice = input('\n> ').strip().lower()
+        choice = prompt_line('\n> ').strip().lower()
 
         if choice == 'r':
             print('\nRebooting...')
-            os.system('reboot')
+            subprocess.run(['reboot'], check=False)
             sys.exit(0)  # Won't reach here, but just in case
         elif choice == 'p':
             print('\nPowering off...')
-            os.system('poweroff')
+            subprocess.run(['poweroff'], check=False)
             sys.exit(0)  # Won't reach here, but just in case
         elif choice == 'q':
             print('\nQuitting grub-wiz...')
@@ -2153,9 +2182,12 @@ def main():
         sys.exit(0)
 
     if opts.validate_custom_config:
-        print(f'grub-wiz: using {wiz.canned_config.using_path}')
-        if 'custom' not in str(wiz.canned_config.using_path):
-            print("NOTE: custom config NOT being used")
+        using_path = str(wiz.canned_config.using_path)
+        print(f'grub-wiz: using {using_path}')
+        if 'custom_config.yaml' not in using_path:
+            print("FAIL: custom config NOT being used (see warnings above)")
+            sys.exit(1)
+        print('OK: custom config is valid and in use')
         sys.exit(0)
 
     if opts.discovery is not None:

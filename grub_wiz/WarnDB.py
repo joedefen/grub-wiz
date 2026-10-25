@@ -76,13 +76,30 @@ class WarnDB:
         try:
             data: Dict[str, Any] = yaml.load(io.StringIO(text)) or {}
 
+            # A hand-edited or corrupted file can contain a list or a scalar
+            # at the top level.  Treat that like any other unreadable state
+            # instead of raising AttributeError on ``'inhibited' in data``.
+            if not isinstance(data, dict):
+                print(f"Warning: {self.yaml_path.name} is not a mapping; ignoring it")
+                self.inhibits.clear()
+                self.all_info.clear()
+                return True
+
             # New format: 'all_warnings' + 'inhibited'
             if 'inhibited' in data:
-                self.inhibits = set(data.get('inhibited', []))
-                self.all_info = dict(data.get('all_warnings', {}))
+                inhibited = data.get('inhibited')
+                all_warnings = data.get('all_warnings')
+                self.inhibits = (set(inhibited)
+                                 if isinstance(inhibited, (list, tuple, set))
+                                 else set())
+                self.all_info = (dict(all_warnings)
+                                 if isinstance(all_warnings, dict) else {})
             # Old format: 'warns' list (backward compatibility)
             else:
-                self.inhibits = set(data.get('warns', []))
+                warns = data.get('warns')
+                self.inhibits = (set(warns)
+                                 if isinstance(warns, (list, tuple, set))
+                                 else set())
                 # all_info will be populated by audit_info()
 
             # Record file modification time

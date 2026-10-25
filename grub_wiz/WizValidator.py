@@ -276,9 +276,14 @@ class WizValidator:
         # 1. Strip surrounding quotes
         resolved_path = path.strip().strip('"').strip("'")
 
-        # 2. Simplified $prefix expansion
+        # 2. Simplified $prefix expansion.  GRUB's $prefix is the distro's
+        #    GRUB directory, not always /boot/grub (Fedora uses /boot/grub2),
+        #    so resolve it to the first candidate that actually exists.
         if resolved_path.startswith('$prefix'):
-            resolved_path = resolved_path.replace('$prefix', base_dirs[0])
+            prefix_dirs = [base for base in base_dirs if base != '/']
+            prefix = next((base for base in prefix_dirs if os.path.isdir(base)),
+                          prefix_dirs[0])
+            resolved_path = resolved_path.replace('$prefix', prefix)
 
         # 3. Handle Absolute Path Check
         if os.path.isabs(resolved_path):

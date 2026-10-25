@@ -49,7 +49,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M13 | ☐ | Unchanged. |
 | M15 | ✅ | Restore stays intentionally source-only: it replaces `/etc/default/grub` and reloads the screens but does not run `update-grub`. The two-step behavior is documented in [`restore_ACTION()`](../grub_wiz/main.py:699), announced in a post-restore notice, and described in [`README.md`](../README.md:175). |
 | M14 | ✅ | PEP 639 license metadata, relevant classifiers, dev extras, and ruff/mypy configs added; the console entry point now enters through `run_cli()` so exceptions tear down curses; LEFT/RIGHT are taken per window through `ConsoleWindowOpts(taken_nav_keys=...)` on `console-window==2.0.2`, so the library's `NAVIGATION_KEYS` is no longer mutated. |
-| Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
+| Lower-severity items | ◐ | Most fixed: `$prefix` resolution, `GrubFile` re-read state, the redundant broad except, `WarnDB` non-mapping YAML, `tag_ACTION` overwrite guard, `request_backup_tag` hint/feedback, `long_params` stray token, unknown-param activation, `os.system`/`input()` use, runner comments, sample scripts, README accuracy, and the `--validate-custom-config` verdict/exit status. Remaining: `BackupMgr.get_backups()` checksum keying, single-quoted continuation joining, year-2999 sample timestamps, and the broad maintainability cleanup. The non-atomic state writes were fixed as part of C1. |
 
 No P0 items remain.
 
@@ -356,30 +356,35 @@ The `NAVIGATION_KEYS` monkeypatch is gone. `console-window` 2.0.2 adds `ConsoleW
 
 ## Lower-severity and polish findings
 
+Legend: ✅ fixed · ☐ open (needs a design decision or is out of scope).
+
 - ✅ [`WizValidator.demo()`](../grub_wiz/WizValidator.py:602) and [`CannedConfig.dump()`](../grub_wiz/CannedConfig.py:216) were broken and are now fixed (M5).
-- [`WizValidator.get_full_path_and_check_existence()`](../grub_wiz/WizValidator.py:142) expands `$prefix` to `/boot/grub` always at [`WizValidator.py:161`](../grub_wiz/WizValidator.py:161), which is wrong on Fedora (`/boot/grub2`).
-- [`WizValidator.probe_disk_layout()`](../grub_wiz/WizValidator.py:89) “early break” only exits the inner partition loop, not the device loop.
-- [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128) uses a bare `except:` at [`GrubFile.py:165`](../grub_wiz/GrubFile.py:165); it can join unrelated lines after a malformed trailing backslash and only supports double quotes.
-- [`GrubFile._scan_for_variable_expansion()`](../grub_wiz/GrubFile.py:208) blacklists any left-hand param containing `$GRUB_`, but does not clear `blacklisted_params`/`extra_params` on re-read.
-- [`WarnDB.refresh()`](../grub_wiz/WarnDB.py:49) catches only `IOError`/`YAMLError`; a YAML document whose top level is a list/string leads to `AttributeError` at [`WarnDB.py:71`](../grub_wiz/WarnDB.py:71).
-- [`WarnDB.write_if_dirty()`](../grub_wiz/WarnDB.py:90) and other state writes are non-atomic (C1).
-- [`BackupMgr.get_backups()`](../grub_wiz/BackupMgr.py:64) keys by checksum, so two backups with different tags but identical content collapse to one entry; [`create_backup`](../grub_wiz/BackupMgr.py:98) also skips identical content by design.
-- [`tag_ACTION()`](../grub_wiz/main.py:690) uses `os.rename()` at [`main.py:703`](../grub_wiz/main.py:703), which silently replaces an existing destination on POSIX.
-- [`request_backup_tag()`](../grub_wiz/main.py:1554) prints a malformed hint with an extra bracket at [`main.py:1561`](../grub_wiz/main.py:1561) and retries silently on invalid input.
-- [`GrubWiz.long_params`](../grub_wiz/main.py:974) contains a stray `'/'` token at [`main.py:977`](../grub_wiz/main.py:977).
-- [`is_active_param()`](../grub_wiz/main.py:1344) returns `True` for an unknown parameter at [`main.py:1351`](../grub_wiz/main.py:1351).
-- [`update_grub()`](../grub_wiz/main.py:1602) uses `os.system()` for echo/reboot/poweroff at [`main.py:1688`](../grub_wiz/main.py:1688) and [`main.py:1702`](../grub_wiz/main.py:1702); the strings are constants, but `subprocess.run`/`print` is preferable.
-- `input()` in [`update_grub()`](../grub_wiz/main.py:1661) and [`DistroVars`](../grub_wiz/DistroVars.py:139) raises `EOFError` in non-interactive contexts.
-- [`Runner`](../runner:13) comments reference a non-existent module name, and `alter_sys=True` will overwrite the manually assigned `sys.argv[0]` at [`runner:17`](../runner:17).
-- [`tests/install_grub_samples.sh`](install_grub_samples.sh:12) references a non-existent `collect_grub_samples.sh`.
-- [`tests/fix_checksums.sh`](fix_checksums.sh:6) targets `00000000` filenames that no longer exist.
-- [`tests/fetch_grub_samples.sh`](fetch_grub_samples.sh:17) invents a random checksum for filenames, so the checksum component no longer reflects file content. Sample files also use year 2999 timestamps.
+- ✅ [`WizValidator.get_full_path_and_check_existence()`](../grub_wiz/WizValidator.py:142) now expands `$prefix` to the first GRUB directory that exists (`/boot/grub`, then `/boot/grub2`, then `/usr/share/grub`) instead of always `/boot/grub`, so Fedora paths resolve.
+- ✅ [`WizValidator.probe_disk_layout()`](../grub_wiz/WizValidator.py:89) no longer contains an early `break` at all: the H2 rewrite walks every device and sets independent flags.
+- ✅ [`GrubFile._join_continuation_lines()`](../grub_wiz/GrubFile.py:128) no longer wraps an infallible `str.split()` in `except Exception` (the audit's bare `except:`).
+- ☐ Still open in that method: a malformed trailing backslash can still join unrelated lines, and only double-quoted continuations are joined.
+- ✅ [`GrubFile.read_file()`](../grub_wiz/GrubFile.py:246) now clears `blacklisted_params`, `extra_params`, and the adopted extra params in `supported_params` (plus `param_data`) before re-parsing, so [`_scan_for_variable_expansion()`](../grub_wiz/GrubFile.py:208) state cannot survive a re-read.
+- ✅ [`WarnDB.refresh()`](../grub_wiz/WarnDB.py:49) now treats a non-mapping top-level YAML document, and non-list `inhibited`/non-dict `all_warnings` values, as an empty state instead of raising.
+- ✅ [`WarnDB.write_if_dirty()`](../grub_wiz/WarnDB.py:90) and the other state writes are atomic (C1).
+- ☐ [`BackupMgr.get_backups()`](../grub_wiz/BackupMgr.py:64) still keys by checksum, so two backups with different tags but identical content collapse to one entry; [`create_backup`](../grub_wiz/BackupMgr.py:98) skips identical content by design, so changing the key format is a behavior decision.
+- ✅ [`tag_ACTION()`](../grub_wiz/main.py:752) now refuses a rename whose destination already exists instead of letting `os.rename()` replace another backup.
+- ✅ [`request_backup_tag()`](../grub_wiz/main.py:1820) now prints a well-formed `[regex=...]` hint, reports that the previous tag was invalid, and seeds the next attempt with it.
+- ✅ [`GrubWiz.long_params`](../grub_wiz/main.py:1178) no longer contains the stray `'/'` token.
+- ✅ [`is_active_param()`](../grub_wiz/main.py:1605) returns `False` for a parameter with no known value.
+- ✅ [`update_grub()`](../grub_wiz/main.py:1874) now uses `print()` instead of `os.system('echo ...')` and `subprocess.run(['reboot'])`/`subprocess.run(['poweroff'])` instead of `os.system()`.
+- ✅ The post-commit prompts use [`prompt_line()`](../grub_wiz/main.py:1180), and [`DistroVars`](../grub_wiz/DistroVars.py:146) catches `EOFError`, so a closed stdin is treated as the safe "no"/"return" answer instead of a traceback.
+- ✅ [`Runner`](../runner:1) comments now name the real module (`grub_wiz.main`), and the manually assigned `sys.argv[0]` was removed because `runpy(..., alter_sys=True)` overwrites it.
+- ✅ [`tests/install_grub_samples.sh`](install_grub_samples.sh:12) now references `fetch_grub_samples.sh`.
+- ✅ [`tests/fix_checksums.sh`](fix_checksums.sh:1) now rewrites the checksum component of every `*.bak` from the file's actual SHA-256 instead of targeting obsolete `00000000` names.
+- ✅ [`tests/fetch_grub_samples.sh`](fetch_grub_samples.sh:11) now downloads to a temporary name and derives the filename checksum from the downloaded content.
+- ☐ Sample files still use year 2999 timestamps (intentional sort order; changing them would rename committed fixtures).
 - README issues:
-  - “validation → update-grub → backup” at [`README.md:26`](../README.md:26) does not match the implementation (backup happens at startup; there is no validation).
-  - The advertised `--discovery=disable` at [`README.md:216`](../README.md:216) crashes (H1).
-  - `--validate-custom-config` at [`README.md:239`](../README.md:239) only prints the selected config path; it does not report a validation verdict or exit nonzero ([`main.py:1882`](../grub_wiz/main.py:1882)).
-  - Typo “WRINTING” at [`README.md:70`](../README.md:70).
-- Maintainability: 45 `TBD` docstrings/markers, 25 broad `except Exception`/bare excepts, 133 top-level `print()` calls, 17 `pylint: disable` lines, no logging, and unused imports/locals flagged by pyflakes (e.g. [`main.py:299`](../grub_wiz/main.py:299), [`main.py:527`](../grub_wiz/main.py:527), [`WizValidator.py:216`](../grub_wiz/WizValidator.py:216)).
+  - ✅ The “How It Works” bullets at [`README.md:26`](../README.md:26) now describe the real order: startup backup, validation, atomic write, update-grub with rollback.
+  - ✅ The `--discovery=disable` behavior is fixed (H1).
+  - ✅ `--validate-custom-config` now prints `OK`/`FAIL` and exits nonzero when the custom config was not accepted.
+  - ✅ Typo “WRINTING” fixed at [`README.md:70`](../README.md:70).
+- ☐ Maintainability remains open in general (45 `TBD` docstrings/markers, broad `except Exception` handlers, print-based diagnostics, no logging). The specific unused imports/locals flagged by pyflakes are gone: `ruff check --select F401,F841,F811,F821,F822,F823` is clean over the package, `runner`, and tests.
+- Regression coverage for the fixed items is in [`tests/test_lower_severity_fixes.py`](test_lower_severity_fixes.py).
 
 ---
 

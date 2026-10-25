@@ -21,9 +21,10 @@
   -   *Respects existing config*: Unknown parameters are preserved with minimal validation
 
 * **How It Works**
+  -   Back up first: on startup, GRUB's current defaults are backed up (tagged and checksummed) if they are unique
   -   Edit with guidance: Choose from presets or edit with validation
   -   Review with checks: See warnings and fix issues before writing
-  -   Write safely: backup → edit → validate → atomic write → update-grub
+  -   Write safely: validate the candidate, install it atomically, then run update-grub; a failed update rolls the file back and regenerates grub.cfg from it
   -   Restore if needed: version history with diff comparison
 
 `grub-wiz` focuses on the 95% of common GRUB configuration tasks, making them safe and simple while preserving your existing customizations.
@@ -67,7 +68,7 @@ NOTES:
 * When you done editing, then type `w` to write the parameter after you **review** them.
 * For editing the `CMDLINE` parameters, see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
 
-##### REVIEW SCREEN AND WRINTING/UPDATING GRUB
+##### REVIEW SCREEN AND WRITING/UPDATING GRUB
 The next step in updating the `grub` configuration is the REVIEW screen:
 ```
  REVIEW  [g]uide=Off  [w]rite-grub    ESC:back ?:help [q]uit  𝚫=4
@@ -269,7 +270,7 @@ For advanced users who need to modify parameter definitions:
 
 **Notes:**
 - Invalid YAML or schema errors fall back to packaged config with a warning
-- Use `grub-wiz --validate-custom-config` to test your changes
+- Use `grub-wiz --validate-custom-config` to test your changes: it reports which config is in use, prints `OK` and exits 0 when your custom config was accepted, and prints `FAIL` and exits nonzero when `grub-wiz` fell back to the packaged config
 - Top-level sections beginning with `_` (`_distro_vars_`, `_re_specs_`, `_update_initramfs_triggers_`) are reserved metadata. Keep them when copying the template: `_distro_vars_` tells `grub-wiz` where to find `/etc/default/grub` and the update commands.
 - Each `GRUB_*` entry requires `default`, `edit_re`, `enums`, and `guidance`. `edit_re_human` is generated at runtime from `_re_specs_`; do not add it.
 - Values are written into `/etc/default/grub`, which is sourced as a shell script, so a value with spaces or shell metacharacters must be quoted (for example `"quiet splash"`). Plain values such as `1024x768,auto` need no quotes. Command substitution is refused unless the regex spec in `_re_specs_` sets `allow_command_sub: true`; only `re_quoted_or_command_sub` (used by `GRUB_DISTRIBUTOR`) does so in the packaged template.

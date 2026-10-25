@@ -9,7 +9,7 @@ BACKUP_DIR="$HOME/.config/grub-wiz"
 # Check if samples exist
 if [ ! -d "$SAMPLES_DIR" ] || [ -z "$(ls -A "$SAMPLES_DIR"/*.bak 2>/dev/null)" ]; then
     echo "Error: No sample configs found in $SAMPLES_DIR"
-    echo "Run ./collect_grub_samples.sh first"
+    echo "Run ./fetch_grub_samples.sh first"
     exit 1
 fi
 
