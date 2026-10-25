@@ -26,7 +26,7 @@ from console_window import NAVIGATION_KEYS
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
-from .GrubCfgParser import get_top_level_grub_entries
+from .GrubCfgParser import entries_to_enums, get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 from .WarnDB import WarnDB
 from .GrubWriter import GrubWriter
@@ -1275,7 +1275,8 @@ class GrubWiz:
         self.menu_entries = get_top_level_grub_entries(
                                 self.distro_vars.grub_cfg)
         try:
-            self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
+            self.param_cfg['GRUB_DEFAULT']['enums'].update(
+                entries_to_enums(self.menu_entries))
         except Exception:
             pass
         self.warn_db = WarnDB(param_cfg=self.param_cfg)
