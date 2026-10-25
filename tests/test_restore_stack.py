@@ -143,3 +143,32 @@ def test_successful_restore_explains_two_step_behavior():
     assert "'20990101-000000-DEADBEEF.custom.bak' restored" in notice
     assert 'grub.cfg has NOT been regenerated' in notice
     assert 'Write the configuration' in notice
+
+
+def test_restore_uses_the_selected_path_not_checksum_lookup():
+    """Two backups can share a checksum; the selected row must win."""
+    win = FakeWin()
+    selected = Path('/tmp/20990101-000000-DEADBEEF.selected.bak')
+    other = Path('/tmp/20990102-000000-DEADBEEF.other.bak')
+    restored = []
+    gw = SimpleNamespace(
+        ordered_backup_pairs=[('DEADBEEF', selected)],
+        backups={'DEADBEEF': other},
+        really_wanna=lambda _act: True,
+        backup_mgr=SimpleNamespace(
+            target_path=Path('/etc/default/grub'),
+            restore_backup=lambda path: restored.append(path) or True,
+        ),
+        navigate_back=lambda: False,
+        reinit_gw=lambda: None,
+        reset_screen_stack=lambda: None,
+        do_start_up_backup=lambda: None,
+    )
+    screen = RestoreScreen.__new__(RestoreScreen)
+    screen.gw = gw
+    screen.app = gw
+    screen.win = win
+
+    screen.restore_ACTION()
+
+    assert restored == [selected]

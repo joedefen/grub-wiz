@@ -64,19 +64,46 @@ class BackupMgr:
         return hashlib.sha256(content).hexdigest()[:8].upper()
 
 
+    @staticmethod
+    def checksum_from_name(name: str) -> str:
+        """Return the checksum encoded in a backup filename, or ''.
+
+        A filename is the identity of a backup once it is on disk.  The
+        checksum component is still useful for best-effort duplicate
+        detection, but it is not a unique key: two tags may share content.
+        """
+        match = BACKUP_FILENAME_PATTERN.search(name)
+        return match.group(2).upper() if match else ''
+
     def get_backups(self) -> Dict[str, Path]:
-        """ TBD """
+        """Return every backup file, keyed by its unique filename.
+
+        Directory entries already have unique names, so keying by filename
+        exposes the complete inventory.  Two files with identical content but
+        different tags are both returned; ``create_backup()`` prevents new
+        duplicates on a best-effort basis and never hides an existing file.
+        """
         backups: Dict[str, Path] = {}
         # Do not follow symlinks: a link must never be treated as a backup.
         with os.scandir(self.config_dir) as entries:
             for entry in entries:
                 if not entry.is_file(follow_symlinks=False):
                     continue
-                match = BACKUP_FILENAME_PATTERN.search(entry.name)
-                if match:
-                    checksum = match.group(2).upper()
-                    backups[checksum] = self.config_dir / entry.name
+                if BACKUP_FILENAME_PATTERN.search(entry.name):
+                    backups[entry.name] = self.config_dir / entry.name
         return backups
+
+    def find_backup_with_checksum(self, checksum: str) -> Optional[Path]:
+        """Return an existing backup whose filename carries *checksum*.
+
+        Used only for best-effort duplicate prevention in
+        ``create_backup()``; filename identity decides what is displayed.
+        """
+        wanted = checksum.upper()
+        for name, path in self.get_backups().items():
+            if self.checksum_from_name(name) == wanted:
+                return path
+        return None
 
     def restore_backup(self, backup_file: Path, dest_path: Optional[Path] = None) -> bool:
         """ TBD """
@@ -126,10 +153,10 @@ class BackupMgr:
         if not current_checksum:
             return None
 
-        existing_backups = self.get_backups()
-        if current_checksum in existing_backups:
-            print(f"Info: File is identical to existing backup: {existing_backups[current_checksum].name}. Skipping new backup.")
-            return existing_backups[current_checksum]
+        existing = self.find_backup_with_checksum(current_checksum)
+        if existing is not None:
+            print(f"Info: File is identical to existing backup: {existing.name}. Skipping new backup.")
+            return existing
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         new_filename = f"{timestamp}-{current_checksum}.{tag}.bak"
@@ -141,7 +168,6 @@ class BackupMgr:
             # directory as root.
             data = self.user_config.safe_read_bytes(target)
             self.user_config.atomic_user_write(new_backup_path, data, mode=0o644)
-            existing_backups = self.get_backups()
 
             print(f"Success: Created new backup: {new_backup_path.name}")
             return new_backup_path

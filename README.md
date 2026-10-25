@@ -46,7 +46,7 @@
 ##### EDIT SCREEN
 Running `grub-wiz` brings a screen similar to:
 ```
- EDIT  [g]uide=Off [w]rite-grub     ?:help [q]uit  𝚫=0
+ EDIT  [g]uide=Off  [w]rite-grub    [R]estore [W]arnCfg ?:help [q]uit  𝚫=0
  [s]how-all-params(22-inact)  ⮜–⮞ [e]dit x:deact
 ─────────────────────────────────────────────────────────────────────────────────────────────
  [Boot Timeout]
@@ -71,7 +71,7 @@ NOTES:
 ##### REVIEW SCREEN AND WRITING/UPDATING GRUB
 The next step in updating the `grub` configuration is the REVIEW screen:
 ```
- REVIEW  [g]uide=Off  [w]rite-grub    ESC:back ?:help [q]uit  𝚫=4
+ REVIEW  [g]uide=Off  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  𝚫=4
                                ⮜–⮞ [e]dit x:deact [u]ndo
 ───────────────────────────────────────────────────────────────────────────────────────
    TIMEOUT···················  0
@@ -135,12 +135,12 @@ If you've changed kernel command-line arguments that affect early boot (GPU driv
 
 After the optional initramfs rebuild, you will be given the choice to reboot, poweroff, or return to `grub-wiz`.
 
-##### GUIDANCE LEVELS AND EXTENDED MENU
-* *Extended Menu*: Typing `m` (i.e., more keys) adds the second line showing the keys for the RestoreScreen (to manage backups) and the "WarningsScreen" to configure (i.e., inhibit and allow) warnings selectively.
+##### GUIDANCE LEVELS AND HEADER HINTS
+* *Header Hints*: On the EDIT screen, `R` opens the RESTORE screen (to manage backups) and `W` opens the WARNINGS-CONFIG screen (to inhibit and allow warnings selectively).  On REVIEW, only `W` is shown: restoring a backup while reviewing would replace the configuration underneath the review, so RESTORE is intentionally available only from EDIT.  Press `?` for the complete key list.
+* *Header Style*: Typing `f` cycles the header style between Underline, Reverse, and Off.
 * *Guidance Levels*: Typing `g` on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `DISABLE_OS_PROBER` parameter is shown below.
 ```
- REVIEW  [g]uide=Full [w]rite-grub     ESC:back ?:help [q]uit  𝚫=3
- [R]estoreScreen  [W]arningsScreen  [f]ancy=Off
+ REVIEW  [g]uide=Full  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  𝚫=3
                              ⮜–⮞ undo
 ──────────────────────────────────────────────────────────────────────────────
 >  DISABLE_OS_PROBER·······  false                                            
@@ -156,7 +156,7 @@ After the optional initramfs rebuild, you will be given the choice to reboot, po
 ```
 
 ##### RESTORE SCREEN
-When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, it looks something like:
+When you enter the restore screen by typing `R` from the EDIT screen, it looks something like:
 ```
  RESTORE [r]estore [d]el [t]ag [v]iew [c]mp [b]aseline    ESC:back ?:help [q]uit
 ───────────────────────────────────────────────────────────────────────────────────

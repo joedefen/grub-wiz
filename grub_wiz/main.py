@@ -165,13 +165,14 @@ class GrubWizScreen(Screen):
         self.gw.navigate_to(HELP_ST)
 
     def enter_restore_ACTION(self):
-        """Handle R key - navigate to restore screen (only from HOME/REVIEW)"""
-        if self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
+        """Handle R key - navigate to restore screen (only from HOME)"""
+        if self.gw.ss.is_curr(HOME_ST):
             self.gw.navigate_to(RESTORE_ST)
 
     def enter_warnings_ACTION(self):
-        """Handle W key - navigate to warnings screen"""
-        self.gw.navigate_to(WARN_ST)
+        """Handle W key - navigate to warnings screen (EDIT/REVIEW only)"""
+        if self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
+            self.gw.navigate_to(WARN_ST)
 
 
 class HomeScreen(GrubWizScreen):
@@ -299,16 +300,16 @@ class HomeScreen(GrubWizScreen):
     def add_common_head1(self, title):
         """ TBD"""
         gw = self.gw
-        header = ''
-        # Add timestamp when verbose headers enabled (helps verify refresh rate)
-        if gw.spins.verbose_header:
-            timestamp = time.strftime('%H:%M:%S')
-            header = f'{timestamp} '
-        header += f'{title} '
+        header = f'{title} '
         level = gw.spins.guide
-        esc = ' ESC:back' if gw.ss.is_curr(REVIEW_ST) else ''
-        # more = 'm:less-hdr' if gw.spins.verbose_header else '[m]ore-hdr'
-        header += f' [g]uide={level}  [w]rite-grub   {esc} ?:help [q]uit'
+        review_screen = gw.ss.is_curr(REVIEW_ST)
+        esc = ' ESC:back' if review_screen else ''
+        # RESTORE is reachable only from EDIT; the warnings configuration is
+        # reachable from both EDIT and REVIEW.  Keep both hints in the first
+        # header line: the default Underline header hides the [x] brackets,
+        # so this stays within the 70-column minimum.
+        destinations = ' [W]arnCfg' if review_screen else ' [R]estore [W]arnCfg'
+        header += f' [g]uide={level}  [w]rite-grub   {esc}{destinations} ?:help [q]uit'
         header += f'  𝚫={len(gw.get_diffs())}'
         gw.add_fancy_header(header)
         gw.warn_db.write_if_dirty()
@@ -318,15 +319,6 @@ class HomeScreen(GrubWizScreen):
         gw = self.gw
         param_name, _, enums, regex, value = gw.get_enums_regex()
         review_screen = gw.ss.is_curr(REVIEW_ST)
-
-        if gw.spins.verbose_header:
-            style = gw.spins.fancy_headers
-            line = '[R]estoreScreen'
-            line += '  [W]arningsScreen' if review_screen else ''
-            line += f'  [f]ancy={style}'
-            if regex:
-                line += '  [E]xpertEdit'
-            gw.add_fancy_header(line)
 
         tab = self.get_tab()
         ctx = gw.win.get_picked_context()
@@ -616,8 +608,8 @@ class ReviewScreen(HomeScreen):
 
 class RestoreScreen(GrubWizScreen):
     """RESTORE screen - backup management"""
-    # Can be accessed from HOME or REVIEW screens
-    come_from_whitelist = [HOME_ST, REVIEW_ST]
+    # Can be accessed only from the HOME (EDIT) screen
+    come_from_whitelist = [HOME_ST]
 
     def __init__(self, grub_wiz):
         """Constructor handles initial backup list setup"""
@@ -713,14 +705,15 @@ class RestoreScreen(GrubWizScreen):
         idx = self.win.pick_pos
         if not 0 <= idx < len(gw.ordered_backup_pairs):
             return
-        key = gw.ordered_backup_pairs[idx][0]
         target = gw.ordered_backup_pairs[idx][1]
         if not gw.really_wanna(f'restore {target.name!r}'):
             return
+        # Restore the row the user selected, not a checksum lookup: two
+        # files may share content and therefore a checksum.
         # Only reinitialize when the file really was replaced.  A failed
         # restore leaves /etc/default/grub untouched, so rebuilding the
         # screens from it would silently discard the user's state for nothing.
-        if not gw.backup_mgr.restore_backup(gw.backups[key]):
+        if not gw.backup_mgr.restore_backup(target):
             self.win.alert(message=f'ERR: restore of {target.name!r} failed')
             return
         # State the intentional two-step behavior at the moment it matters.
@@ -935,7 +928,7 @@ class ViewScreen(GrubWizScreen):
 
 class WarnScreen(GrubWizScreen):
     """WARNINGS Screen"""
-    # Can only be accessed from REVIEW screen
+    # Can be accessed from HOME or REVIEW screens
     come_from_whitelist = [HOME_ST, REVIEW_ST]
 
     def __init__(self, grub_wiz):
@@ -968,9 +961,12 @@ class WarnScreen(GrubWizScreen):
                 inh = db.is_inhibit(warn_key)
         line = 'WARNINGS-CONFIG'
         line += f"   [x]:{'allow-warning' if inh else 'inhibit-warning'}"
+        # Put help before the growing search text so a long pattern cannot
+        # push the only hint for the help screen off the right edge.
+        line += '   ?:help'
         # Show search bar (with cursor if active, or just text if not)
         line += gw.search_bar.get_display_string(prefix='   /')
-        line += '   ESC=back [q]uit'
+        line += '   ESC:back [q]uit'
         gw.add_fancy_header(line)
 
     def refresh_warn_info(self):
@@ -1427,7 +1423,6 @@ class GrubWiz:
         # Register all keys (with stack available, actions will be properly scoped)
         spinner.add_key('escape', 'ESC - back to prev screen', genre="action", keys=[27,])
         spinner.add_key('help_mode', '? - enter help screen', genre='action')
-        spinner.add_key('verbose_header', 'm - more keys shown', vals=[False, True])
         spinner.add_key('quit', 'q,ctl-c - quit the app', genre='action', keys={0x3, ord('q')})
 
         spinner.add_key('cycle_next', '=>,SP - next cycle value',
@@ -1834,10 +1829,19 @@ class GrubWiz:
 
 
     def refresh_backup_list(self):
-        """ TBD """
+        """Rebuild the full backup inventory, newest first.
+
+        ``get_backups()`` is keyed by filename, so every file on disk gets a
+        row even when another file has identical content.  The checksum is
+        carried alongside each path only to mark the current configuration.
+        """
         self.backups = self.backup_mgr.get_backups()
-        self.ordered_backup_pairs = sorted(self.backups.items(),
-                           key=lambda item: item[1], reverse=True)
+        self.ordered_backup_pairs = sorted(
+            ((self.backup_mgr.checksum_from_name(name), path)
+             for name, path in self.backups.items()),
+            key=lambda item: item[1],
+            reverse=True,
+        )
 
     def request_backup_tag(self, prompt, seed='custom'):
         """ Prompt user for a valid tag ... turn spaces into '-'
@@ -1867,11 +1871,14 @@ class GrubWiz:
         self.refresh_backup_list()
         target = self.backup_mgr.target_path
         checksum = self.backup_mgr.calc_checksum(target)
+        known_checksums = {
+            self.backup_mgr.checksum_from_name(name) for name in self.backups
+        }
         if not self.backups:
             self.backup_mgr.create_backup('orig')
             self.refresh_backup_list()
 
-        elif checksum not in self.backups:
+        elif checksum not in known_checksums:
             answer = self.request_backup_tag(f'Enter a tag to back up {target}')
             if answer:
                 self.backup_mgr.create_backup(answer)
