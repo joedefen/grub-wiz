@@ -1621,23 +1621,22 @@ class GrubWiz:
         # The staging name is unique and lives in a root-owned directory.
         candidate_path = user_config.staging_path(self.grub_writer.etc_grub)
 
-        ok = True
-        write_rv = self.grub_file.write_file(candidate_path)
-        if not write_rv: # failure
-            ok = False
-
-        if ok:
-            commit_rv, err = self.grub_writer.commit_validated_grub_config(
-                candidate_path)
-            if not commit_rv:
-                ok = False
-                print(err)
-
-        if ok:
-            install_rv = self.grub_writer.run_grub_update()
-            if not install_rv[0]:
-                print(install_rv[1])
-                ok = False
+        ok = self.grub_file.write_file(candidate_path)
+        if not ok:
+            # Staging failed before anything was touched; drop any partial file.
+            try:
+                if os.path.lexists(candidate_path):
+                    os.unlink(candidate_path)
+            except OSError:
+                pass
+        else:
+            # Validate, install atomically, then run the GRUB update.  If the
+            # update fails, GrubWriter restores the previous defaults file and
+            # regenerates grub.cfg from it, so a rejected change cannot survive
+            # the next boot.
+            ok, commit_msg = self.grub_writer.commit_and_update(candidate_path)
+            if not ok:
+                print(commit_msg)
 
         # Check if initramfs rebuild is needed
         if ok and self.distro_vars.update_initramfs:
@@ -1689,7 +1688,7 @@ class GrubWiz:
         if ok:
             os.system('\n\necho "OK ... /etc/default/grub newly written/updated"')
         else:
-            os.system('\n\necho "FAIL ... /etc/default/grub NOT written/updated"')
+            os.system('\n\necho "FAIL ... changes NOT applied (previous /etc/default/grub kept)"')
         print('\n\nChoose:')
         if ok:
             print('  [r]eboot now')

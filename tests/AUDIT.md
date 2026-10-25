@@ -25,7 +25,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | ID | Status | Summary |
 |---|---|---|
 | C1 | ✅ | Root-owned state moved to `/var/lib/grub-wiz` (cache, rollback) and `/run/grub-wiz` (session). User-directory writes use a directory fd plus `O_CREAT|O_EXCL|O_NOFOLLOW`, `fstat`/`fchmod`/`fchown`, and `os.replace()`. Restore rejects symlinks, NUL bytes, and command substitution. |
-| C2 | ◐ | Candidate is staged beside the target; `grub-script-check` runs when installed; a rollback copy is kept in `/var/lib/grub-wiz`; the target is replaced atomically and restored if the write fails. Still commits before `update-grub` and does not roll back a failed `grub-mkconfig`. |
+| C2 | ✅ | Candidate is staged beside the target and checked with `sh -n` (`grub-script-check` is advisory only); the previous file is snapshotted in memory and in `/var/lib/grub-wiz`; replacement is atomic; `commit_and_update()` rolls the file back when the GRUB update fails and re-runs the update, so `grub.cfg` matches the restored file. |
 | C3 | ☐ | Unchanged. |
 | H1–H8 | ☐ | Unchanged. |
 | H9 | ☐ | Restore now rejects command substitution, but editor token-validation policy is unchanged. |
@@ -35,7 +35,7 @@ Legend: ✅ fixed · ◐ partial · ☐ open.
 | M8–M15 | ☐ | Unchanged. |
 | Lower-severity items | ☐ | Open, except the non-atomic state writes (warning DB, discovery cache, backups), which are fixed as part of C1. |
 
-Remaining P0 work is C3, H1, H2, H3, and H8, followed by the C2 `update-grub` sequencing.
+Remaining P0 work is C3, H1, H2, H3, and H8.
 
 ---
 
@@ -73,7 +73,7 @@ Because the directory is user-writable, a local user can pre-create a symlink at
 
 **Recommendations:** keep root-owned mutable state in a root-owned directory (e.g. `/var/lib/grub-wiz`); if user directories must be used, write with `os.open(..., O_CREAT|O_EXCL|O_NOFOLLOW)` plus `fstat` verification and `os.replace`; reject symlinks; validate restored content; do not run `update-grub` until the file has been parsed/validated; consider a privilege-separated helper.
 
-### C2. The commit path is not “validated”, atomic, or reversible — ◐ PARTIAL
+### C2. The commit path is not “validated”, atomic, or reversible — ✅ FIXED
 
 [`commit_validated_grub_config()`](../grub_wiz/GrubWriter.py:292) is named and documented as validating, but it performs no validation at all. It simply:
 
@@ -84,6 +84,11 @@ Because the directory is user-writable, a local user can pre-create a symlink at
 There is no `grub-script-check`, no shell-syntax check, no parse-back, no `fsync`, no temp-file-in-same-directory + `os.replace`, and no rollback. [`update_grub()`](../grub_wiz/main.py:1602) commits the file *before* running the update command at [`main.py:1628`](../grub_wiz/main.py:1628), then runs GRUB update at [`main.py:1635`](../grub_wiz/main.py:1635). If `grub-mkconfig` fails or the machine loses power mid-copy, `/etc/default/grub` remains changed and potentially invalid. For a bootloader tool, this is the most important reliability defect.
 
 **Recommendations:** write candidate to `/etc/default/grub.new`, validate with `grub-script-check`, atomically `os.replace`, keep the previous file until `update-grub` succeeds, and roll back on failure. Re-run the update after rollback.
+
+**Remediation:** the candidate is staged beside the target and installed with `os.replace`; the previous content is kept in memory and in `/var/lib/grub-wiz/last-known-good.grub`; [`commit_and_update()`](../grub_wiz/GrubWriter.py:475) runs the update, and on failure calls [`rollback_last_commit()`](../grub_wiz/GrubWriter.py:448) and then re-runs the update. Two deviations from the recommendation, both intentional:
+
+- The syntax gate is `sh -n`, not `grub-script-check`. `/etc/default/grub` is sourced by distro shell scripts, not parsed by GRUB. `grub-script-check` rejects stock Ubuntu configs (it fails on `GRUB_DISTRIBUTOR=\`lsb_release -i -s ...\``), so using it as a gate would make valid machines uncommittable. It is still run when installed and its rejection is reported as an advisory warning.
+- The staged name is unique (`.<name>.grub-wiz-<pid>-<token>`) rather than the fixed `.new`, so a pre-planted file or symlink cannot influence the commit.
 
 ### C3. Python version metadata is incorrect
 
@@ -315,7 +320,7 @@ The tests pass (`20 passed`) but:
 **P0 — before any real-world use**
 
 1. ✅ Fix the privilege boundary (C1): move root-owned state out of the user directory and eliminate symlink-following writes.
-2. ◐ Make the commit path validate, atomically replace, and roll back (C2) — validation, atomic replace, and write-failure rollback done; update-grub sequencing remains.
+2. ✅ Make the commit path validate, atomically replace, and roll back (C2).
 3. Fix `requires-python` and classifiers to match reality (C3).
 4. Fix `opts.paramd` (H1).
 5. Fix `lsblk` key casing and scan both flat devices and children; stop treating every vfat ESP as another OS (H2).
@@ -358,6 +363,8 @@ The tests pass (`20 passed`) but:
 ## Remediation verification (2026-10-25)
 
 - `python -m py_compile grub_wiz/*.py runner tests/*.py` — passed.
-- `pytest -q` — 20 passed, 17 pre-existing warnings.
+- `pytest -q` — 30 passed, 17 pre-existing warnings (10 new tests cover the commit path).
 - Symlink probe: an `os.replace()`-based write replaced a destination symlink without modifying its target; `safe_read_bytes()` refused symlinks; `atomic_user_write()` rejected a path outside the user state directory; no temporary files remained.
-- Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or `grub-script-check` failure paths.
+- Validator probe: `grub-script-check /etc/default/grub` succeeds on the host, but fails with `Syntax error at line 9` on the stock Ubuntu sample because of the backtick `GRUB_DISTRIBUTOR` line. This is why `sh -n` is the gate and `grub-script-check` is advisory.
+- Hermetic tests inject a fake `UserConfigDir`: NUL rejection, `sh -n` rejection (unterminated quote), successful atomic commit plus rollback copy, advisory `grub-script-check`, rollback and update re-run on failure, failed-rollback `CRITICAL` reporting, failed post-rollback update reporting, and rollback of a target that did not previously exist.
+- Not re-tested: real sudo elevation, a real `/etc/default/grub` commit, or a real failing `grub-mkconfig`.
