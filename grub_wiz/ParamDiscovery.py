@@ -3,10 +3,13 @@
 Discovers which GRUB parameters are supported on this system by parsing
 the installed GRUB documentation (info pages).
 
-Results are cached in ~/.config/grub-wiz/system-params.yaml for performance.
+The result depends on the machine (installed GRUB docs, distro), not on the
+invoking user, so the cache lives in the root-owned system state directory
+(/var/lib/grub-wiz/system-params.yaml) rather than in a user's home.
 """
 # pylint: disable=broad-exception-caught,
 
+import io
 import re
 import argparse
 import subprocess
@@ -49,8 +52,11 @@ class ParamDiscovery:
         ParamDiscovery.singleton = self
         
         self.user_config = UserConfigDir.get_singleton("grub-wiz")
-        self.config_dir = self.user_config.config_dir
-        self.cache_file = self.config_dir / 'system-params.yaml'
+        # Machine-wide derived state: root-owned, never inside a user's home.
+        self.system_state_dir = self.user_config.system_state_dir
+        self.cache_file = self.system_state_dir / 'system-params.yaml'
+        # Pre-split cache location, read once for backward compatibility.
+        self._legacy_cache_file = self.user_config.user_state_dir / 'system-params.yaml'
         self.cached_data = None
         self._manual_disabled = False
 
@@ -173,11 +179,13 @@ class ParamDiscovery:
             'manual_disabled': self._manual_disabled
         }
 
-        with open(self.cache_file, 'w', encoding='utf-8') as f:
-            yaml.dump(data, f)
+        stream = io.StringIO()
+        yaml.dump(data, stream)
 
-        # Set ownership to real user
-        self.user_config.give_to_user(self.cache_file, mode=0o644)
+        # Root-owned atomic write; the destination directory is verified to be
+        # root-owned and the temp file is installed with os.replace().
+        self.user_config.atomic_root_write(
+            self.cache_file, stream.getvalue(), mode=0o600)
 
     def load_cached_data(self) -> Optional[dict]:
         """
@@ -189,12 +197,21 @@ class ParamDiscovery:
         """
         if self.cached_data:
             return self.cached_data
-        if not self.cache_file.exists():
+
+        try:
+            try:
+                text = self.user_config.safe_read_text(self.cache_file)
+            except FileNotFoundError:
+                # One-time fallback to the old per-user cache location.
+                text = self.user_config.safe_read_text(self._legacy_cache_file)
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            print(f"Warning: Refusing to read cache file {self.cache_file}: {e}")
             return None
 
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
-                data = yaml.load(f)
+            data = yaml.load(io.StringIO(text))
 
             if not data:
                 return None

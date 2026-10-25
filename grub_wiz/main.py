@@ -21,6 +21,7 @@ from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
+from console_window import NAVIGATION_KEYS
 from .CannedConfig import CannedConfig, EXPERT_EDIT
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -34,6 +35,24 @@ from .UserConfigDir import UserConfigDir
 
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
 SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
+
+
+def release_arrow_keys_for_app():
+    """Allow LEFT/RIGHT to be bound to app actions.
+
+    console-window 2.0.1 reserves every code in ``NAVIGATION_KEYS``:
+    ``OptionSpinner.add_key()`` rejects it and ``ConsoleWindow.prompt()``
+    consumes it before the app sees it.  Neither cursor key has a scroll
+    action, though: ``_navigation_target()`` maps UP/DOWN and the page keys
+    only, so prompt() would silently swallow LEFT/RIGHT anyway.  The modules
+    ``console_window.keys``, ``.spinner`` and ``.window`` all hold a reference
+    to the same mutable set, so discarding the two codes in place un-reserves
+    them everywhere.  Vertical navigation still works, and dialogs keep their
+    left/right cursor editing via ``_DIALOG_SIMPLE_MOVES``, which does not
+    consult this set.
+    """
+    NAVIGATION_KEYS.discard(cs.KEY_LEFT)
+    NAVIGATION_KEYS.discard(cs.KEY_RIGHT)
 
 class Tab:
     """ TBD """
@@ -1064,6 +1083,10 @@ class GrubWiz:
 
     def setup_win(self):
         """TBD """
+        # LEFT/RIGHT are used here for cycle_prev/cycle_next, so release them
+        # from console-window's reserved navigation set before registering keys.
+        release_arrow_keys_for_app()
+
         # Create ConsoleWindow first (needed by screen objects)
         win_opts = ConsoleWindowOpts()
         win_opts.head_line = True
@@ -1593,8 +1616,10 @@ class GrubWiz:
         # print('-'*60)
         # print(contents)
         # print('-'*60)
-        config_dir = UserConfigDir.get_singleton().config_dir
-        candidate_path = config_dir / 'etc_default_grub_candidate'
+        user_config = UserConfigDir.get_singleton()
+        # Stage next to the target so os.replace() is atomic (same filesystem).
+        # The staging name is unique and lives in a root-owned directory.
+        candidate_path = user_config.staging_path(self.grub_writer.etc_grub)
 
         ok = True
         write_rv = self.grub_file.write_file(candidate_path)

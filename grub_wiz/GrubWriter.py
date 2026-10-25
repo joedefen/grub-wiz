@@ -12,6 +12,7 @@ import glob
 from pathlib import Path
 from typing import Tuple, List, Dict
 from .DistroVars import DistroVars
+from .UserConfigDir import UserConfigDir
 
 class GrubWriter:
     """
@@ -30,6 +31,7 @@ class GrubWriter:
         """
         self.distro_vars = distro_vars
         self.etc_grub = self.distro_vars.etc_grub
+        self.user_config = UserConfigDir.get_singleton()
 
         # Cache the grub update command and config file path at initialization
         self.update_grub = distro_vars.update_grub
@@ -291,39 +293,66 @@ class GrubWriter:
     # def commit_validated_grub_config(self, contents: str) -> Tuple[bool, str]:
     def commit_validated_grub_config(self, temp_path: Path) -> Tuple[bool, str]:
         """
-        Safely commits new GRUB configuration contents to the target file.
+        Validate and atomically install a staged GRUB defaults file.
 
         The process is:
-        1. Write contents to a secure temporary file.
-        2. If validation succeeds, copy the temporary file over the target_path.
-        3. Explicitly set permissions to 644 (rw-r--r--) for security and readability.
-        4. If validation fails, delete the temporary file and return the error.
+        1. Read the staging file without following symlinks.
+        2. Reject NUL bytes and run ``grub-script-check`` when available.
+        3. Keep a rollback copy of the current target in the root-owned system
+           state directory.
+        4. Atomically replace the target with ``os.replace()`` (same directory,
+           mode 0644), restoring the previous content if anything fails.
 
-        NOTE: The caller should call run_grub_update() immediately after this method
-        if commit is successful.
+        NOTE: The caller should call run_grub_update() immediately after this
+        method if commit is successful.
 
         Args:
-            contents: The new content of the /etc/default/grub file as a string.
+            temp_path: Path to the staged candidate (should live in the same
+                directory as the target so the rename is atomic).
 
         Returns:
             A tuple (success: bool, message: str)
-            - If success is True, message is a confirmation.
-            - If success is False, message contains the error and grub-script-check output.
         """
         # 1. Check for root permissions
         if os.geteuid() != 0:
             return False, f"Permission Error: Root access is required to modify {self.etc_grub} and run validation/update tools."
 
+        temp_path = Path(temp_path)
+        previous: bytes = b''
+        have_previous = False
 
         try:
-            # --- Step 2: Commit/Copy the Validated File ---
-            print(f'+ cp {str(temp_path)!r} {str(self.etc_grub)!r}')
-            shutil.copy2(temp_path, self.etc_grub)
+            # --- Step 2: Read and validate the candidate ---
+            data = self.user_config.safe_read_bytes(temp_path)
+            if b'\x00' in data:
+                return False, f"Validation Error: {temp_path} contains NUL bytes."
 
-            # --- Step 3: Explicitly set permissions to 644 (rw-r--r--) ---
-            # This guarantees the standard permissions for /etc/default/grub
-            # The octal '0o644' means: owner (6=rw-), group (4=r--), others (4=r--)
-            os.chmod(self.etc_grub, 0o644)
+            checker = shutil.which('grub-script-check')
+            if checker:
+                check = subprocess.run(
+                    [checker, str(temp_path)],
+                    capture_output=True, text=True, check=False)
+                if check.returncode != 0:
+                    detail = (check.stderr or check.stdout or '').strip()
+                    return False, f"Validation Error: grub-script-check failed: {detail}"
+
+            # --- Step 3: Keep a rollback copy of the current target ---
+            try:
+                previous = self.user_config.safe_read_bytes(self.etc_grub)
+                have_previous = True
+            except FileNotFoundError:
+                have_previous = False
+
+            if have_previous:
+                rollback = self.user_config.system_state_dir / 'last-known-good.grub'
+                try:
+                    self.user_config.atomic_root_write(rollback, previous, mode=0o600)
+                except Exception as e:
+                    print(f"Warning: could not write rollback copy: {e}", file=sys.stderr)
+
+            # --- Step 4: Atomic install ---
+            print(f'+ install {str(temp_path)!r} -> {str(self.etc_grub)!r}')
+            self.user_config.atomic_root_write(self.etc_grub, data, mode=0o644)
 
             return True, f"OK: replaced {self.etc_grub!r}"
 
@@ -331,11 +360,18 @@ class GrubWriter:
             return False, f"Permission Error: Cannot write to {self.etc_grub} or execute GRUB utilities."
 
         except Exception as e:
+            # Best-effort rollback: never leave a partially written target.
+            if have_previous:
+                try:
+                    self.user_config.atomic_root_write(self.etc_grub, previous, mode=0o644)
+                    return False, (f"Commit failed ({e}); previous {self.etc_grub} restored.")
+                except Exception as restore_exc:
+                    print(f"CRITICAL: rollback failed: {restore_exc}", file=sys.stderr)
             return False, f"An unexpected error occurred during commit: {e}"
 
         finally:
-            # --- Step 4: Clean up the temporary file ---
-            if temp_path and os.path.exists(temp_path):
+            # --- Step 5: Clean up the staging file ---
+            if temp_path and os.path.lexists(temp_path):
                 try:
                     os.unlink(temp_path)
                 except Exception as e:

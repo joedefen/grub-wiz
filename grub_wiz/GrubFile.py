@@ -27,12 +27,15 @@ import re
 import textwrap
 from typing import List, Dict, Optional, Any #, Union
 from types import SimpleNamespace
+from pathlib import Path
 try:
     from .CannedConfig import CannedConfig
     from .ParamDiscovery import ParamDiscovery
+    from .UserConfigDir import UserConfigDir
 except Exception:
     from CannedConfig import CannedConfig
     from ParamDiscovery import ParamDiscovery
+    from UserConfigDir import UserConfigDir
 
 
 class GrubFile:
@@ -400,9 +403,11 @@ class GrubFile:
                 for prefix, line in new_lines:
                     sys.stdout.write(prefix + '  ' + line)
             else:
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    for prefix, line in new_lines:
-                        f.write(line)
+                # Atomic, symlink-safe write.  Safe whether the destination is
+                # a root-owned staging file in /etc/default or a plain path.
+                text = ''.join(line for _, line in new_lines)
+                UserConfigDir.get_singleton().atomic_write(
+                    Path(output_path), text, mode=0o644)
                 print(f"OK: wrote '{output_path}'")
             return True
         except Exception as wr_ex:

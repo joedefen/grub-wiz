@@ -3,7 +3,6 @@
 # pylint: disable=line-too-long,invalid-name,broad-exception-caught
 import os
 import sys
-import shutil
 import hashlib
 import re
 from datetime import datetime
@@ -16,7 +15,7 @@ from .UserConfigDir import UserConfigDir
 
 GRUB_DEFAULT_PATH = Path("/etc/default/grub")
 USER_CONFIG = UserConfigDir.get_singleton("grub-wiz")
-GRUB_CONFIG_DIR = USER_CONFIG.config_dir
+GRUB_CONFIG_DIR = USER_CONFIG.user_state_dir
 
 # Regex pattern for identifying backup files: YYYYMMDD-HHMMSS-{CHECKSUM}.{TAG}.bak
 BACKUP_FILENAME_PATTERN = re.compile(
@@ -36,7 +35,7 @@ class BackupMgr:
 
         # Use provided user_config or get singleton
         self.user_config = user_config if user_config else USER_CONFIG
-        self.config_dir = self.user_config.config_dir
+        self.config_dir = self.user_config.user_state_dir
 
     # --- calc_checksum, get_backups, and restore_backup remain the same ---
     # (Leaving these out for brevity in the response, but they are included in the full file block)
@@ -64,11 +63,15 @@ class BackupMgr:
     def get_backups(self) -> Dict[str, Path]:
         """ TBD """
         backups: Dict[str, Path] = {}
-        for file_path in self.config_dir.iterdir():
-            match = BACKUP_FILENAME_PATTERN.search(file_path.name)
-            if match:
-                checksum = match.group(2).upper()
-                backups[checksum] = file_path
+        # Do not follow symlinks: a link must never be treated as a backup.
+        with os.scandir(self.config_dir) as entries:
+            for entry in entries:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                match = BACKUP_FILENAME_PATTERN.search(entry.name)
+                if match:
+                    checksum = match.group(2).upper()
+                    backups[checksum] = self.config_dir / entry.name
         return backups
 
     def restore_backup(self, backup_file: Path, dest_path: Optional[Path] = None) -> bool:
@@ -79,18 +82,28 @@ class BackupMgr:
             print(f"Error: Root permissions required to write to {destination}.", file=sys.stderr)
             return False
 
-        if not backup_file.exists():
-            print(f"Error: Backup file {backup_file} not found.", file=sys.stderr)
-            return False
-
         try:
-            shutil.copy2(backup_file, destination)
-            os.chmod(destination, 0o644)
+            # A backup lives in a user-writable directory, so treat it as
+            # untrusted input: reject symlinks/non-regular files and bound size.
+            data = self.user_config.safe_read_bytes(backup_file)
+            if b'\x00' in data:
+                print(f"Error: Backup {backup_file.name} contains NUL bytes.", file=sys.stderr)
+                return False
 
+            # /etc/default/grub is sourced by the distro's GRUB scripts, so a
+            # restored file containing command substitution is root code
+            # execution.  A backup is user-writable input; refuse it.
+            if b'$(' in data or b'`' in data:
+                print(f"Error: Backup {backup_file.name} contains command substitution; "
+                      "refusing to restore.", file=sys.stderr)
+                return False
+
+            # Atomic, symlink-safe replacement of the target.
+            self.user_config.atomic_root_write(destination, data, mode=0o644)
             print(f"Success: Restored {backup_file.name} to {destination}")
             return True
         except Exception as e:
-            print(f"Error restoring backup to {destination}: {e}", file=sys.stderr)
+            print(f"Error restoring backup {backup_file} to {destination}: {e}", file=sys.stderr)
             return False
     # -----------------------------------------------------------------------
 
@@ -119,11 +132,11 @@ class BackupMgr:
         new_backup_path = self.config_dir / new_filename
 
         try:
-            # Copy the file to the backup location (done as root)
-            shutil.copy2(target, new_backup_path)
-
-            # Set ownership to real user
-            self.user_config.give_to_user(new_backup_path, mode=0o644)
+            # Read the root-owned source, then install the backup with an
+            # atomic user-owned write.  Never open a path inside the user's
+            # directory as root.
+            data = self.user_config.safe_read_bytes(target)
+            self.user_config.atomic_user_write(new_backup_path, data, mode=0o644)
             existing_backups = self.get_backups()
 
             print(f"Success: Created new backup: {new_backup_path.name}")

@@ -37,18 +37,29 @@ class CannedConfig:
         self._process_config()
         self.using_path = resource_path
 
-        config_dir = UserConfigDir.get_singleton().config_dir
-        
-        # 2. Dump reference copy to config dir
+        user_config = UserConfigDir.get_singleton()
+        config_dir = user_config.user_state_dir
+
+        # 2. Dump reference copy to the user's config dir (atomic, user-owned).
+        #    A pre-existing entry of any kind is left untouched.
         ref_path = config_dir / 'canned_config.yaml'
         if not ref_path.exists():
-            ref_path.write_text(resource_path.read_text())
-        
-        # 3. Try to load user's custom config
+            user_config.atomic_user_write(
+                ref_path, resource_path.read_text(), mode=0o644)
+
+        # 3. Try to load user's custom config (never follow a symlink).
         custom_path = config_dir / 'custom_config.yaml'
-        if custom_path.exists():
+        try:
+            custom_text = user_config.safe_read_text(custom_path)
+        except FileNotFoundError:
+            custom_text = None
+        except OSError as e:
+            print(f"WARNING: Refusing to read {custom_path}: {e}")
+            custom_text = None
+
+        if custom_text is not None:
             try:
-                custom_data = yaml.load(custom_path.read_text())
+                custom_data = yaml.load(custom_text)
                 err =  self.validate_schema(custom_data)
                 if err is None:
                     self.data = custom_data  # Or merge if you prefer

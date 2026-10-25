@@ -4,6 +4,7 @@ TBD
 """
 # pylint: disable=too-many-instance-attributes
 
+import io
 from pathlib import Path
 from typing import Set, Dict, Any, Optional
 from ruamel.yaml import YAML, YAMLError
@@ -32,7 +33,8 @@ class WarnDB:
             filename: Name of the YAML file to store warning database
         """
         self.user_config = UserConfigDir.get_singleton("grub-wiz")
-        self.config_dir: Path = self.user_config.config_dir
+        # User preference data: belongs to the invoking user.
+        self.config_dir: Path = self.user_config.user_state_dir
         self.yaml_path: Path = self.config_dir / filename
         self.param_cfg = param_cfg # has out-of-box state
 
@@ -57,15 +59,23 @@ class WarnDB:
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
 
-        # File not existing is normal on first run - start fresh
-        if not self.yaml_path.exists():
+        try:
+            # Reject symlinks and other non-regular files instead of following
+            # a user-planted link as root.
+            text = self.user_config.safe_read_text(self.yaml_path)
+        except FileNotFoundError:
+            # File not existing is normal on first run - start fresh
+            self.inhibits.clear()
+            self.all_info.clear()
+            return True
+        except (IOError, OSError) as e:
+            print(f"Warning: Refusing to read {self.yaml_path.name}: {e}")
             self.inhibits.clear()
             self.all_info.clear()
             return True
 
         try:
-            with self.yaml_path.open('r') as f:
-                data: Dict[str, Any] = yaml.load(f) or {}
+            data: Dict[str, Any] = yaml.load(io.StringIO(text)) or {}
 
             # New format: 'all_warnings' + 'inhibited'
             if 'inhibited' in data:
@@ -103,14 +113,13 @@ class WarnDB:
         }
 
         try:
-            # 1. Write the file
-            with self.yaml_path.open('w') as f:
-                yaml.dump(data, f)
+            # 1. Serialize, then install atomically as the invoking user.
+            stream = io.StringIO()
+            yaml.dump(data, stream)
+            self.user_config.atomic_user_write(
+                self.yaml_path, stream.getvalue(), mode=0o600)
 
-            # 2. Set ownership and permissions (crucial when running as root)
-            self.user_config.give_to_user(self.yaml_path, mode=0o600)
-
-            # 3. Update state
+            # 2. Update state
             self.dirty_count = 0
             self.last_read_time = self.yaml_path.stat().st_mtime
             return True

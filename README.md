@@ -23,7 +23,7 @@
 * **How It Works**
   -   Edit with guidance: Choose from presets or edit with validation
   -   Review with checks: See warnings and fix issues before writing
-  -   Write safely: validation → update-grub → backup
+  -   Write safely: backup → edit → validate → atomic write → update-grub
   -   Restore if needed: version history with diff comparison
 
 `grub-wiz` focuses on the 95% of common GRUB configuration tasks, making them safe and simple while preserving your existing customizations.
@@ -167,7 +167,7 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
 
 *Backup and restore features*:
  - the leading `●` indicates it is the backup for the current session.
- - backups of `/etc/default/grub` are stored in `~/.config/grub-wiz`
+ - backups of `/etc/default/grub` are stored in `~/.config/grub-wiz` (mode `0700`; only your user can read them)
  - backups are named `YYYYMMDD-HHMMSS-{8-hex-digit-checksum}.{tag}.bak`; you supply the tag.
  - if there are no backup files, on startup `grub-wiz` automatically creates one with tag='orig'
  - if there are backup files and none match the current `/etc/default/grub`, `grub-wiz` prompts you for a tag for its backup (you may decline).
@@ -208,6 +208,37 @@ Finally, we show the Warnings Configuration Screen.  Here is a short snippet:
 Every possible warning (currently about 50) is shown on the Warning Configuration Screen. You can inhibit and allow warnings as you please. More often, you probably will inhibit/allow warnings on the Review Screen as they arise and you wish to dismiss it.
 
 ---
+#### Files, State, and Residue
+
+`grub-wiz` runs as root but keeps two kinds of state apart: files that belong to the user who invoked `sudo`, and machine-wide files that only root may change. This split is what prevents a local user from redirecting a root write with a pre-created symlink.
+
+*User-facing state* — `~/.config/grub-wiz/` (mode `0700`, owned by the invoking user):
+
+| Path | Purpose | Safe to delete? |
+|---|---|---|
+| `*.bak` | Tagged backups of `/etc/default/grub` | Yes (loses restore/compare history) |
+| `warn-db.yaml` | Inhibited/allowed warnings and severities | Yes (resets warning preferences) |
+| `custom_config.yaml` | Your optional custom parameter definitions | Keep |
+| `canned_config.yaml` | Reference template for the custom-config workflow | Yes (recreated on the next start) |
+
+*Root-owned system state* — never writable by a normal user:
+
+| Path | Purpose | Safe to delete? |
+|---|---|---|
+| `/var/lib/grub-wiz/system-params.yaml` | Cached `info grub` parameter discovery (machine-wide) | Yes (regenerated; `--factory-reset` deletes it) |
+| `/var/lib/grub-wiz/last-known-good.grub` | Rollback copy of `/etc/default/grub` from the last commit | Yes (used only for rollback during a commit) |
+| `/run/grub-wiz/` | Reserved for per-session scratch and locks; cleared at boot | Yes |
+| `/etc/default/.grub-wiz-*` | Transient commit staging file next to the target | Yes (removed automatically) |
+
+Notes:
+- State that must survive a reboot lives in `/var/lib`; state that does not lives in `/run`.
+- `sudo` is required to inspect or remove the root-owned system state.
+- Writes into `~/.config/grub-wiz` are atomic and never follow symlinks. The commit candidate is staged next to `/etc/default/grub` so the final rename is atomic, and it is removed whether the commit succeeds or fails.
+- Nothing is written to `/tmp`; no lock or cache files are left behind.
+- `grub-wiz --factory-reset` deletes the discovery cache and the warning database, but preserves `*.bak` backups.
+- Restoring a backup is refused if it is a symlink, contains NUL bytes, or contains shell command substitution (a backtick or `$(`). This prevents a crafted backup from executing as root when the distro sources `/etc/default/grub`.
+
+---
 #### Parameter Discovery and Excluded Parameters
 Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens so that you do not add it from the confusion. Notes:
 - We recommend installing GRUB documentation for best results:
@@ -215,6 +246,7 @@ Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Confi
     - Fedora/RHEL: `sudo dnf install grub2-common`
 - If `info` provides inaccurate results, you can disable discovery:
     - `grub-wiz --discovery=disable` (use "enable" or "show" for other actions)
+- Discovery results are cached machine-wide in `/var/lib/grub-wiz/system-params.yaml`
 
 
 `grub-wiz` focuses on common configuration tasks. You may have specialized needs such as:
