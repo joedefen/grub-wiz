@@ -20,7 +20,7 @@ import pytest
 from ruamel.yaml import YAML
 
 from grub_wiz.CannedConfig import CannedConfig
-from grub_wiz.main import GrubWiz, InlineConfirmPrompt, check_shell_value
+from grub_wiz.main import GrubWiz, check_shell_value
 
 
 # --- The value grammar ----------------------------------------------------
@@ -129,107 +129,88 @@ def test_backtick_substitution_cannot_nest():
 
 # --- edit_param / expert_edit_param wiring --------------------------------
 
-class FakeWin:
-    """Minimal ConsoleWindow stand-in that replays dialog answers."""
-
-    def __init__(self, answers=(), cols=80):
-        self._answers = list(answers)
-        self.flashes = []
-        self.calls = []
-        self.cols = cols
-        self.passthrough_mode = False
-
-    def answer(self, prompt=None, seed=None, height=1):
-        self.calls.append({'prompt': prompt, 'seed': seed, 'height': height})
-        if not self._answers:
-            return None
-        return self._answers.pop(0)
-
-    def flash(self, message, duration=1.5):
-        self.flashes.append(message)
-
-
 def _bare_grubwiz(cfg, win=None):
     """A GrubWiz instance with only the attributes the edit paths touch."""
     gw = object.__new__(GrubWiz)
     gw.param_values = {name: '' for name in cfg}
     gw.param_cfg = cfg
     gw.win = win
-    gw.inline_confirm = InlineConfirmPrompt()
-    gw._confirm_prev_passthrough = False
+    gw.confirm_scope, gw.confirm_item_key = 'header', None
     return gw
 
 
 def type_text(gw, text, clear=0):
     """Type into the live inline prompt (backspacing *clear* seeded chars)."""
     for _ in range(clear):
-        gw.handle_confirm_key(127)
+        gw.win.handle_prompt_key(127)
     for char in text:
-        gw.handle_confirm_key(ord(char))
+        gw.win.handle_prompt_key(ord(char))
 
 
 def press_enter(gw):
-    gw.handle_confirm_key(10)
+    gw.win.handle_prompt_key(10)
 
 
-def test_edit_param_accepts_comma_separated_gfxmode():
+def test_edit_param_accepts_comma_separated_gfxmode(make_headless_win):
     """GFXMODE is a long value, so it keeps the multi-row dialog."""
     gw = _bare_grubwiz({'GRUB_GFXMODE': {'allow_command_sub': False}})
-    win = FakeWin(['1024x768,auto'])
+    win = make_headless_win(answers=['1024x768,auto'])
 
     gw.edit_param(win, 'GRUB_GFXMODE', re.compile(r'^[0-9a-z,]+$'))
 
     assert gw.param_values['GRUB_GFXMODE'] == '1024x768,auto'
     assert win.flashes == []
-    assert win.calls[0]['height'] == 5
-    assert gw.inline_confirm.is_active is False
+    assert win.dialog_calls[0]['height'] == 5
+    assert win.prompt_active is False
 
 
-def test_short_param_is_edited_inline_without_a_dialog():
+def test_short_param_is_edited_inline_without_a_dialog(make_headless_win):
     gw = _bare_grubwiz({'GRUB_EARLY_INITRD_LINUX_STOCK': {}})
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.edit_param(win, 'GRUB_EARLY_INITRD_LINUX_STOCK', re.compile(r'^.*$'))
 
-    assert win.calls == []  # no full-screen dialog
-    assert gw.inline_confirm.scope == 'item'
-    assert gw.inline_confirm.item_key == 'GRUB_EARLY_INITRD_LINUX_STOCK'
-    assert (gw.inline_confirm.get_display_string()
+    assert win.dialog_calls == []  # no full-screen dialog
+    assert gw.confirm_scope == 'item'
+    assert gw.confirm_item_key == 'GRUB_EARLY_INITRD_LINUX_STOCK'
+    assert (win.prompt_line.get_display_string()
             == '⚠️ Edit value, then ENTER or ESC: │')
     # What the value may be is always available on the dim line below.
-    assert gw.inline_confirm.hint == 'pat=^.*$'
+    assert win.prompt_line.hint == 'pat=^.*$'
 
 
-def test_inline_edit_seeds_the_value_being_replaced():
+def test_inline_edit_seeds_the_value_being_replaced(make_headless_win):
     gw = _bare_grubwiz({'GRUB_DISTRIBUTOR': {}})
     gw.param_values['GRUB_DISTRIBUTOR'] = 'Ubuntu'
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.edit_param(win, 'GRUB_DISTRIBUTOR', re.compile(r'^.*$'))
 
-    assert gw.inline_confirm.answer == 'Ubuntu'
+    assert (win.prompt_line.get_display_string()
+            == '⚠️ Edit value, then ENTER or ESC: Ubuntu│')
 
 
-def test_inline_edit_escape_leaves_the_value_alone():
+def test_inline_edit_escape_leaves_the_value_alone(make_headless_win):
     gw = _bare_grubwiz({'GRUB_CUSTOM': {}})
     gw.param_values['GRUB_CUSTOM'] = 'old'
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.expert_edit_param(win, 'GRUB_CUSTOM')
     type_text(gw, 'new', clear=len('old'))
-    gw.handle_confirm_key(27)
+    gw.win.handle_prompt_key(27)
 
     assert gw.param_values['GRUB_CUSTOM'] == 'old'
-    assert gw.inline_confirm.is_active is False
+    assert gw.win.prompt_active is False
 
 
-def test_edit_param_retries_until_a_multi_word_value_is_quoted():
+def test_edit_param_retries_until_a_multi_word_value_is_quoted(make_headless_win):
     gw = _bare_grubwiz({'GRUB_EARLY_INITRD_LINUX_STOCK': {}})
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
+
     bad = 'intel-ucode.img amd-ucode.img'
     good = '"intel-ucode.img amd-ucode.img"'
 
@@ -237,34 +218,38 @@ def test_edit_param_retries_until_a_multi_word_value_is_quoted():
     type_text(gw, bad)
     press_enter(gw)
 
-    assert gw.inline_confirm.is_active is True
-    # A refused answer only changes the wording; the hint line is unchanged.
-    assert gw.inline_confirm.prompt == 'Re-edit value, then ENTER or ESC'
-    assert gw.inline_confirm.hint == 'pat=^.*$'
-    assert gw.inline_confirm.answer == bad
+    assert gw.win.prompt_active is True
+    # A refused answer only changes the wording; the hint line is unchanged,
+    # and the refused text is still in the buffer, editable.
+    assert win.prompt_line.prompt == '⚠️ Re-edit value, then ENTER or ESC'
+    assert win.prompt_line.hint == 'pat=^.*$'
+    assert win.prompt_line.get_display_string() == (
+        f'⚠️ Re-edit value, then ENTER or ESC: {bad}│')
     assert gw.param_values['GRUB_EARLY_INITRD_LINUX_STOCK'] == ''
 
     type_text(gw, good, clear=len(bad))
     press_enter(gw)
 
     assert gw.param_values['GRUB_EARLY_INITRD_LINUX_STOCK'] == good
-    assert gw.inline_confirm.is_active is False
+    assert gw.win.prompt_active is False
 
 
-def test_edit_param_rejects_command_substitution_unless_opted_in():
+def test_edit_param_rejects_command_substitution_unless_opted_in(
+        make_headless_win):
     """CMDLINE_LINUX is a long value, so this one still uses the dialog."""
     gw = _bare_grubwiz({'GRUB_CMDLINE_LINUX': {'allow_command_sub': False}})
-    win = FakeWin(['$(reboot)', '"quiet"'])
+    win = make_headless_win(answers=['$(reboot)', '"quiet"'])
 
     gw.edit_param(win, 'GRUB_CMDLINE_LINUX', re.compile(r'^.*$'))
 
     assert gw.param_values['GRUB_CMDLINE_LINUX'] == '"quiet"'
-    assert any('command substitution' in message for message in win.flashes)
+    assert any('command substitution' in message
+               for message, _duration in win.flashes)
 
 
-def test_edit_param_allows_opted_in_command_substitution():
+def test_edit_param_allows_opted_in_command_substitution(make_headless_win):
     gw = _bare_grubwiz({'GRUB_DISTRIBUTOR': {'allow_command_sub': True}})
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.edit_param(win, 'GRUB_DISTRIBUTOR', re.compile(r'^.*$'))
@@ -274,10 +259,11 @@ def test_edit_param_allows_opted_in_command_substitution():
     assert gw.param_values['GRUB_DISTRIBUTOR'] == '$(lsb_release -i -s)'
 
 
-def test_edit_param_rejects_command_substitution_inside_double_quotes():
+def test_edit_param_rejects_command_substitution_inside_double_quotes(
+        make_headless_win):
     """The old validator accepted `"$(reboot)"` because it only checked quotes."""
     gw = _bare_grubwiz({'GRUB_DISTRIBUTOR': {'allow_command_sub': True}})
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.edit_param(win, 'GRUB_DISTRIBUTOR', re.compile(r'^.*$'))
@@ -285,7 +271,7 @@ def test_edit_param_rejects_command_substitution_inside_double_quotes():
     press_enter(gw)
 
     assert gw.param_values['GRUB_DISTRIBUTOR'] == ''
-    assert gw.inline_confirm.is_active is True
+    assert gw.win.prompt_active is True
 
     type_text(gw, '"Ubuntu"', clear=len('"$(reboot)"'))
     press_enter(gw)
@@ -293,18 +279,19 @@ def test_edit_param_rejects_command_substitution_inside_double_quotes():
     assert gw.param_values['GRUB_DISTRIBUTOR'] == '"Ubuntu"'
 
 
-def test_expert_edit_allows_command_substitution_but_not_injection():
+def test_expert_edit_allows_command_substitution_but_not_injection(
+        make_headless_win):
     gw = _bare_grubwiz({'GRUB_CUSTOM': {}})
-    win = FakeWin()
+    win = make_headless_win()
     gw.win = win
 
     gw.expert_edit_param(win, 'GRUB_CUSTOM')
-    assert gw.inline_confirm.hint == 'expert mode: minimal checks'
+    assert win.prompt_line.hint == 'expert mode: minimal checks'
     type_text(gw, 'x; reboot')
     press_enter(gw)
 
     assert gw.param_values['GRUB_CUSTOM'] == ''
-    assert gw.inline_confirm.prompt == 'Re-edit value, then ENTER or ESC'
+    assert win.prompt_line.prompt == '⚠️ Re-edit value, then ENTER or ESC'
 
     type_text(gw, '$(reboot)', clear=len('x; reboot'))
     press_enter(gw)
@@ -312,16 +299,16 @@ def test_expert_edit_allows_command_substitution_but_not_injection():
     assert gw.param_values['GRUB_CUSTOM'] == '$(reboot)'
 
 
-def test_expert_edit_of_a_long_param_keeps_the_full_screen_dialog():
+def test_expert_edit_of_a_long_param_keeps_the_full_screen_dialog(
+        make_headless_win):
     gw = _bare_grubwiz({'GRUB_CMDLINE_LINUX': {}})
-    win = FakeWin(['"quiet splash"'])
+    win = make_headless_win(answers=['"quiet splash"'])
 
     gw.expert_edit_param(win, 'GRUB_CMDLINE_LINUX')
 
-    assert win.calls[0]['height'] == 5
+    assert win.dialog_calls[0]['height'] == 5
     assert gw.param_values['GRUB_CMDLINE_LINUX'] == '"quiet splash"'
-    assert gw.inline_confirm.is_active is False
-
+    assert win.prompt_active is False
 
 # --- Shipped config consistency ------------------------------------------
 

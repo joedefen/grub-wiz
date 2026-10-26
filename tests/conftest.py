@@ -11,6 +11,11 @@ user's configuration directory, and so results do not depend on a stale
 ``system-params.yaml`` cache.  The direct ``UserConfigDir`` tests construct the
 real class explicitly (with redirected roots); this fixture only intercepts the
 singleton used by the application modules.
+
+The window fixtures at the bottom provide a *real* ``ConsoleWindow`` on a
+headless backend.  The in-place prompt, the header/body model and the status
+line therefore come from console-window itself; only the two interactions that
+poll a real keyboard (``answer()`` and ``flash()``) are replaced.
 """
 
 import os
@@ -19,6 +24,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from console_window import ConsoleWindow, ConsoleWindowOpts
+from console_window.backend import HeadlessBackend
 
 from grub_wiz.ParamDiscovery import ParamDiscovery
 from grub_wiz.UserConfigDir import UserConfigDir
@@ -143,6 +151,57 @@ def isolated_param_discovery(monkeypatch):
         "get_singleton",
         staticmethod(lambda: fake_discovery),
     )
+
+
+class HeadlessTestWin(ConsoleWindow):
+    """A real window without a terminal, plus canned dialogs.
+
+    Everything a test needs to observe is the production behaviour: the
+    prompt lifecycle (``begin_prompt``/``handle_prompt_key``), the header and
+    body row model, and the status line.  ``answer()`` and ``flash()`` block on
+    the keyboard, so they are reduced to a canned answer and a record.
+    """
+
+    def __init__(self, rows=24, cols=80, answers=()):
+        super().__init__(opts=ConsoleWindowOpts(),
+                         backend=HeadlessBackend(rows=rows, cols=cols),
+                         singleton=False)
+        self.answers = list(answers)
+        self.dialog_calls = []
+        self.flashes = []
+
+    def answer(self, prompt='', seed='', height=1, **_kwargs):
+        """Replay the next canned dialog answer (``None`` ends the dialog)."""
+        self.dialog_calls.append({'prompt': prompt, 'seed': seed,
+                                  'height': height})
+        return self.answers.pop(0) if self.answers else None
+
+    def flash(self, message='', duration=2.0):
+        """Record a modal message instead of drawing it and polling keys."""
+        self.flashes.append((message, duration))
+
+
+@pytest.fixture
+def headless_win():
+    """One real window on a headless backend, stopped at teardown."""
+    win = HeadlessTestWin()
+    yield win
+    win.stop_curses()
+
+
+@pytest.fixture
+def make_headless_win():
+    """Factory for any number of headless windows, all stopped at teardown."""
+    opened = []
+
+    def build(rows=24, cols=80, answers=()):
+        win = HeadlessTestWin(rows=rows, cols=cols, answers=answers)
+        opened.append(win)
+        return win
+
+    yield build
+    while opened:
+        opened.pop().stop_curses()
 
 
 @pytest.fixture(autouse=True)

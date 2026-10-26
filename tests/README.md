@@ -22,7 +22,7 @@ tests/
 ├── test_sync_check.py                # /etc/default/grub vs generated grub.cfg mtimes
 ├── test_canned_config_loading.py     # Custom-config loading and fallbacks
 ├── test_warn_db_persistence.py       # Warning DB formats and write failures
-├── test_main_helpers.py              # Non-curses helpers in main.py
+├── test_main_helpers.py              # Helpers in main.py, on a headless window
 ├── test_cli_branches.py              # Reset/validation/demo and module CLIs
 ├── test_data/                        # Test GRUB configuration files
 │   ├── continuation_and_expansion.conf
@@ -239,7 +239,7 @@ guidance wrapping, write failures, and the quote/continuation helpers.
 
 ### `test_main_helpers.py`
 
-Covers the non-curses helpers: cell-width measurement and truncation, diffs,
+Covers the terminal-free helpers: cell-width measurement and truncation, diffs,
 enum/regex selection, activation defaults, activate/deactivate state,
 backup-tag normalization, the startup rule (BASELINE once, nothing on later
 launches), the tag handed over from REVIEW (`RESYNC` for an empty diff,
@@ -247,6 +247,13 @@ untagged when no change could be classified), recording every commit, the
 quit confirmation for unapplied changes, Ctrl-C reaching that same check (it
 is the quit key, even when it arrives as `KeyboardInterrupt`), and quoted enum
 lookup.
+
+The retag path does need a window, so those tests use the `make_headless_win`
+fixture from [`conftest.py`](conftest.py): a real `ConsoleWindow` over a
+headless backend. That way the prompt rows, the `⚠️` wording and the status
+line are the production ones; only `answer()`/`flash()`, which poll a real
+keyboard, are replaced. A refused rename is asserted through
+`current_status`, because that is what keeps the backup list on screen.
 
 ### `test_cli_branches.py`
 

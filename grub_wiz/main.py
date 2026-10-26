@@ -25,7 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
-                            InlineConfirmation)
+                            InlineConfirmation, BasicTextScreen)
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -204,83 +204,6 @@ class InlineSearchPrompt:
     @property
     def cursor_pos(self) -> int:
         return self._editor.cursor_pos
-
-
-class InlineConfirmPrompt:
-    """A confirmation drawn in place, without an overlay dialog.
-
-    ``console_window.InlineConfirmation`` owns the key handling and, in ``y``
-    mode, turns one printable keystroke into a confirmed/cancelled result.  This
-    adapter adds the one-line rendering used by the screens and remembers the
-    callback that continues the action after the prompt is gone.
-
-    ``scope`` tells the screen where the line belongs: ``'header'`` for an
-    action that applies to the whole screen or program (drawn as the last
-    header line, just before the divider), ``'item'`` for an action that only
-    concerns the picked row (drawn directly after that row).
-    """
-
-    def __init__(self) -> None:
-        self._editor = InlineConfirmation()
-        self.prompt = ''
-        self.hint = ''
-        self.scope = 'header'
-        self.item_key = None
-        self.on_confirm = None
-        self.on_cancel = None
-
-    def start(self, prompt, *, on_confirm=None, on_cancel=None, mode='y',
-              identity=None, seed='', scope='header', item_key=None,
-              hint='') -> None:
-        self.prompt = prompt
-        self.hint = hint
-        self.scope = scope
-        self.item_key = item_key
-        self.on_confirm = on_confirm
-        self.on_cancel = on_cancel
-        self._editor.start(action_type=None, identity=identity,
-                           mode=mode, initial=seed)
-
-    def handle_key(self, key):
-        """Return ``'continue'``, ``'confirmed'`` or ``'cancelled'``.
-
-        ``key`` is None when the main loop woke on its idle timeout/resize;
-        that is not an answer, so the prompt stays live.
-        """
-        if not self.is_active:
-            return 'inactive'
-        if key is None:
-            return 'continue'
-        return self._editor.handle_key(key)
-
-    def cancel(self) -> None:
-        self._editor.cancel()
-        self.prompt = ''
-        self.hint = ''
-        self.scope = 'header'
-        self.item_key = None
-        self.on_confirm = None
-        self.on_cancel = None
-
-    def get_display_string(self) -> str:
-        if not self.is_active:
-            return ''
-        mode = self._editor.mode or ''
-        if mode in ('Y', 'y'):
-            return f'⚠️ {self.prompt}  [Press "{mode}" or ESC]'
-        return f'⚠️ {self.prompt}: {self._editor.get_display_string()}'
-
-    @property
-    def answer(self) -> str:
-        return self._editor.input_buffer
-
-    @property
-    def is_active(self) -> bool:
-        return self._editor.active
-
-    @property
-    def mode(self):
-        return self._editor.mode
 
 
 # Note: Clue class has been replaced with Context from ConsoleWindow
@@ -1083,11 +1006,17 @@ class RestoreScreen(GrubWizScreen):
             except (OSError, UnicodeDecodeError) as ex:
                 self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
-class CompareScreen(GrubWizScreen):
-    """  Show the comparison of two backup files """
+class CompareScreen(BasicTextScreen, GrubWizScreen):
+    """COMPARE screen - compare two backups side by side.
+
+    The rows are preformatted here and handed to the library's
+    ``BasicTextScreen``, which owns the drawing: no pick mode, no actions, one
+    scrollable block of lines under a fixed header.  MRO note: ``BasicTextScreen``
+    comes first so that its ``draw_screen()``/``set_text()`` win, and its
+    ``super().__init__()`` still reaches ``GrubWizScreen`` for the ``gw`` alias.
+    """
     come_from_whitelist = [RESTORE_ST]
 
-    """COMPARE screen - compared two backups"""
     def __init__(self, grub_wiz):
         """Constructor validates backup data is loaded"""
         super().__init__(grub_wiz)
@@ -1103,11 +1032,17 @@ class CompareScreen(GrubWizScreen):
 
     def draw_screen(self):
         """Draw the side-by-side comparison and its header."""
-        self.win.set_pick_mode(False)
-        self.add_body()
-        self.add_head()
+        # diff_lines() first: it is what fills in cnt1/cnt2 for the header.
+        self.set_text(lines=self.diff_lines(), head=self.head_lines())
+        super().draw_screen()
 
-    def add_body(self):
+    def head_lines(self):
+        """Header naming both backups and their line counts."""
+        return ['COMPARE   ESC:back',
+                f'< {self.bak1.name} [#lines={self.cnt1}]',
+                f'> {self.bak2.name} [#lines={self.cnt2}]']
+
+    def diff_lines(self):
         """Render (and cache) the diff between the two selected backups."""
         def get_val(param, data):
             # param_data holds SimpleNamespace records; a parameter that only
@@ -1156,10 +1091,12 @@ class CompareScreen(GrubWizScreen):
             self.results = lines
 
         # Display with wrapping
-        wid = self.win.cols - 3  # Account for '< ' or '> ' prefix (2 chars) + margin
+        cols = self.win.cols
+        wid = cols - 3  # Account for '< ' or '> ' prefix (2 chars) + margin
+        wrapped = []
         for line in self.results:
             if not line:
-                self.win.add_body('')
+                wrapped.append('')
                 continue
 
             # Check if line starts with a prefix
@@ -1168,34 +1105,33 @@ class CompareScreen(GrubWizScreen):
                 content = line[2:]
 
                 # First line with prefix
-                if len(line) <= self.win.cols - 1:
-                    self.win.add_body(line)
+                if len(line) <= cols - 1:
+                    wrapped.append(line)
                 else:
                     # Need to wrap
-                    self.win.add_body(prefix + content[:wid])
+                    wrapped.append(prefix + content[:wid])
                     content = content[wid:]
 
                     # Continuation lines with indentation
                     while content:
                         indent = '  '  # 2 spaces to align with content after prefix
-                        chunk_size = self.win.cols - len(indent) - 1
-                        self.win.add_body(indent + content[:chunk_size])
+                        chunk_size = cols - len(indent) - 1
+                        wrapped.append(indent + content[:chunk_size])
                         content = content[chunk_size:]
             else:
-                self.win.add_body(line)
-
-    def add_head(self):
-        """Add the COMPARE header naming both backups and their line counts."""
-        win = self.win
-        win.add_header('COMPARE   ESC:back')
-        win.add_header(f'< {self.bak1.name} [#lines={self.cnt1}]')
-        win.add_header(f'> {self.bak2.name} [#lines={self.cnt2}]')
+                wrapped.append(line)
+        return wrapped
 
 
 class ViewScreen(GrubWizScreen):
     """VIEW screen - view backup contents"""
     # Can only be accessed from RESTORE screen
     come_from_whitelist = [RESTORE_ST]
+
+    # Deliberately not a BasicTextScreen: its model is one string per row, and
+    # the line-number gutter here is a *second span* on the same row (bold
+    # number, plain text, via resume=True).  Flattening the two would either
+    # bold the content or unstyle the gutter, so the drawing stays local.
 
     def on_pop(self):
         """Clean up backup view data when screen is removed"""
@@ -1555,8 +1491,10 @@ class GrubWiz:
         self.bak_lines = None # the currently viewed .bak file
         self.bak_path = None
         self.screens = []
-        self.inline_confirm = InlineConfirmPrompt()
-        self._confirm_prev_passthrough = False
+        # Where the live prompt belongs, and which row it is about.  Row
+        # identity is an application concept, so the window is told *where* to
+        # draw rather than being taught what a row is; see begin_confirm().
+        self.confirm_scope, self.confirm_item_key = 'header', None
         self.reinit_gw()
 
     ####################################################################
@@ -1565,60 +1503,36 @@ class GrubWiz:
     # A destructive key used to open win.answer(), which replaces the whole
     # screen with a dialog.  The confirmation is now an ordinary line: a header
     # line for actions that apply to the whole screen/program, or a body line
-    # after the picked row for actions that concern only that item.  The main
-    # loop routes every key to the prompt while it is live, so an action key
-    # cannot fire underneath it.
+    # after the picked row for actions that concern only that item.  The window
+    # owns the live prompt (text, buffer, hint, key routing and the callbacks
+    # of ConsoleWindow.begin_prompt()); this app only decides where the line is
+    # drawn.  The main loop routes every key to the prompt while it is live, so
+    # an action key cannot fire underneath it.
     ####################################################################
 
+    #: Marks a confirmation as a question rather than content.  It stays in the
+    #: app's own text: the library keeps a caller's wording verbatim so that
+    #: decorations remain application policy.
+    CONFIRM_GLYPH = '⚠️'
+
     def begin_confirm(self, prompt, *, on_confirm=None, on_cancel=None,
-                      mode='y', identity=None, seed='', scope='header',
-                      item_key=None, hint=''):
+                      mode='y', seed='', scope='header', item_key=None,
+                      hint=''):
         """Start an inline confirmation; return False without a window.
 
-        *hint* is optional text drawn dim on the line below an item-scoped
-        prompt: what the value may be, so the prompt itself stays short.
+        *scope* is ``'header'`` for an action that applies to the whole
+        screen or program, or ``'item'`` for an action that only concerns the
+        picked row identified by *item_key*.  *hint* is optional text drawn dim
+        on the line below an item-scoped prompt: what the value may be, so the
+        prompt itself stays short.
         """
         if self.win is None:
             return False
-        self.inline_confirm.start(prompt, on_confirm=on_confirm,
-                                  on_cancel=on_cancel, mode=mode,
-                                  identity=identity, seed=seed,
-                                  scope=scope, item_key=item_key, hint=hint)
-        # Passthrough already forwards printable keys, the editing keys and
-        # ESC, so no handled_keys juggling is needed to drive the widget.
-        self._confirm_prev_passthrough = self.win.passthrough_mode
-        self.win.passthrough_mode = True
-        return True
-
-    def end_confirm(self):
-        """Cancel the inline prompt and restore the window's key routing."""
-        self.inline_confirm.cancel()
-        if self.win is not None:
-            self.win.passthrough_mode = self._confirm_prev_passthrough
-
-    def handle_confirm_key(self, key):
-        """Route one key to the live inline confirmation.
-
-        Returns True when the prompt consumed the key.  A confirmed answer is
-        delivered to the callback after the prompt has been torn down, so the
-        callback is free to start another prompt (for example to re-ask after
-        bad input).
-        """
-        prompt = self.inline_confirm
-        if not prompt.is_active:
-            return False
-        result = prompt.handle_key(key)
-        if result == 'confirmed':
-            answer, callback = prompt.answer, prompt.on_confirm
-            self.end_confirm()
-            if callback:
-                callback(answer)
-        elif result == 'cancelled':
-            callback = prompt.on_cancel
-            self.end_confirm()
-            if callback:
-                callback()
-        return True
+        self.confirm_scope, self.confirm_item_key = scope, item_key
+        return self.win.begin_prompt(f'{self.CONFIRM_GLYPH} {prompt}',
+                                     hint=hint, mode=mode, seed=seed,
+                                     on_confirm=on_confirm,
+                                     on_cancel=on_cancel)
 
     def begin_commit_confirm(self, tag=None):
         """Ask inline, then commit; the action applies to the whole program."""
@@ -2009,35 +1923,28 @@ class GrubWiz:
     def add_confirm_header(self):
         """Draw a program/screen-scoped confirmation as the last header line.
 
-        ``add_header`` rather than ``add_fancy_header``: the bracketed key hint
-        is literal text here, not the ``[x]`` markup the fancy parser would
-        consume.
+        ``add_prompt_header`` rather than ``add_fancy_header``: the bracketed
+        key hint is literal text here, not the ``[x]`` markup the fancy parser
+        would consume.
         """
-        prompt = self.inline_confirm
-        if not prompt.is_active or prompt.scope != 'header':
+        if self.win is None or self.confirm_scope != 'header':
             return
-        self.win.add_header(prompt.get_display_string(), attr=cs.A_BOLD)
+        self.win.add_prompt_header(attr=cs.A_BOLD)
 
     def add_confirm_item_line(self, item_key):
         """Draw an item-scoped confirmation directly below that item.
 
         A screen calls this from its body builder after emitting the row whose
-        stable identity is *item_key*.  The line is detail, not a pick target,
-        so the row the prompt concerns stays selected while it is live.
+        stable identity is *item_key*.  The prompt and its hint are transient
+        detail rows, not pick targets, so the row the prompt concerns stays
+        selected while it is live.  Truncating the hint is the window's job
+        (``add_prompt_lines``), so the dim line cannot overflow here.
         """
-        prompt = self.inline_confirm
-        if (not prompt.is_active or prompt.scope != 'item'
-                or prompt.item_key != item_key):
+        if self.win is None or self.confirm_scope != 'item':
             return
-        self.win.add_body(prompt.get_display_string(), attr=cs.A_BOLD,
-                          context=Context(genre='TRANSIENT', pickable=False))
-        if prompt.hint:
-            # What the value may be, kept on its own dim line: the prompt line
-            # then only has to say how to finish, which stays short.
-            cols = getattr(self.win, 'cols', 80)
-            hint = truncate_to_width(prompt.hint, max(10, cols - 2))
-            self.win.add_body(hint, attr=cs.A_DIM,
-                              context=Context(genre='TRANSIENT', pickable=False))
+        if self.confirm_item_key != item_key:
+            return
+        self.win.add_prompt_lines(attr=cs.A_BOLD, hint_attr=cs.A_DIM)
 
     def has_live_item_confirm(self, item_key):
         """True when the live inline prompt belongs to *item_key*.
@@ -2046,9 +1953,9 @@ class GrubWiz:
         edited: the prompt is the only thing the keys can act on, and the
         detail lines would otherwise push it off the visible area.
         """
-        prompt = self.inline_confirm
-        return bool(prompt.is_active and prompt.scope == 'item'
-                    and prompt.item_key == item_key)
+        return bool(self.win is not None and self.win.prompt_active
+                    and self.confirm_scope == 'item'
+                    and self.confirm_item_key == item_key)
 
 
 
@@ -2351,11 +2258,11 @@ class GrubWiz:
         and editable with the caret/arrow keys, so the listing stays visible
         and it is obvious which file is being changed.
 
-        The answer comes back through the callback (``handle_confirm_key``
-        runs it once the line is gone), so nothing is returned here.  When
-        *invalid* is set the prompt is restated after a rejected answer; the
-        bad text is still in the buffer, which is what the old blocking loop
-        did by asking again.
+        The answer comes back through the prompt callback (the window runs it
+        once the line is gone), so nothing is returned here.  When *invalid* is
+        set the prompt is restated after a rejected answer; the bad text is
+        still in the buffer, which is what the old blocking loop did by asking
+        again.
 
         Only the RESTORE screen's retag action reaches this: a backup is never
         named by asking.  Returns False when there is no window to draw in.
@@ -2373,8 +2280,10 @@ class GrubWiz:
         A rejected answer asks again with the offending text still editable.
         ``os.rename()`` silently replaces an existing destination on POSIX,
         which would destroy another backup when a tag is reused, so an
-        occupied target is refused with a flash message: the listing and the
-        name that collided stay visible, which a modal alert would hide.
+        occupied target is refused with a status message on the separator row.
+        The status line leaves the listing and the name that collided on
+        screen, which a modal alert (or ``flash()``, which clears the screen
+        first) would hide.
         """
         tag = self.fold_backup_tag(answer)
         if not self.is_valid_backup_tag(tag):
@@ -2384,15 +2293,15 @@ class GrubWiz:
         new_path = chosen.parent / new_name
         if new_path != chosen:
             if os.path.lexists(new_path):
-                self.win.flash(message=f'ERR: {new_path.name} already exists',
-                               duration=3.0)
+                self.win.status(text=f'ERR: {new_path.name} already exists',
+                                level='error', timeout=5.0)
             else:
                 try:
                     os.rename(chosen, new_path)
                 except OSError as exce:
-                    self.win.flash(
-                        message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]',
-                        duration=3.0)
+                    self.win.status(
+                        text=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]',
+                        level='error', timeout=5.0)
         self.refresh_backup_list()
 
     def do_start_up_backup(self):
@@ -2725,9 +2634,11 @@ class GrubWiz:
             if key is not None:
                 # A live inline confirmation owns every key: ESC cancels, the
                 # confirming key continues the action, and nothing can trigger
-                # an action key underneath the prompt.
-                if self.inline_confirm.is_active:
-                    self.handle_confirm_key(key)
+                # an action key underneath the prompt.  An idle wake-up (``key
+                # is None``: an expired prompt() timeout or a resize) is not an
+                # answer, so the prompt simply stays live.
+                if win.prompt_active:
+                    win.handle_prompt_key(key)
                     win.clear()
                     continue
 

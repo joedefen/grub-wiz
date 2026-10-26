@@ -1,11 +1,14 @@
 """Regression tests for the COMPARE screen (audit finding H5).
 
-``CompareScreen.add_body()`` used to merge ``GrubFile.extra_params`` (config
+``CompareScreen.diff_lines()`` used to merge ``GrubFile.extra_params`` (config
 dicts such as ``default``/``enums``/``guidance``) into ``param_data`` (which
 holds ``SimpleNamespace`` records).  Any backup containing an unvalidated
 ``GRUB_*`` parameter then crashed the screen with:
 
     AttributeError: 'dict' object has no attribute 'value'
+
+The screen hands its preformatted rows to the library's ``BasicTextScreen``, so
+the tests drive ``draw_screen()`` and read the rows back off the window.
 """
 
 import sys
@@ -18,7 +21,7 @@ from grub_wiz.main import CompareScreen
 
 
 class FakeWin:
-    """Just enough of ConsoleWindow for ``CompareScreen.add_body()``."""
+    """Just enough of ConsoleWindow for ``CompareScreen.draw_screen()``."""
 
     cols = 80
 
@@ -73,7 +76,7 @@ def test_compare_with_unvalidated_param_does_not_crash(tmp_path):
         'GRUB_TIMEOUT=10\n')
 
     screen, win = make_screen(param_cfg, bak1, bak2)
-    screen.add_body()  # used to raise AttributeError
+    screen.draw_screen()  # used to raise AttributeError
 
     rendered = '\n'.join(win.body_lines)
     assert 'GRUB_CUSTOM_UNKNOWN=foo' in rendered
@@ -93,10 +96,30 @@ def test_compare_unvalidated_param_in_both_backups(tmp_path):
         'GRUB_CUSTOM_UNKNOWN=bar\n')
 
     screen, win = make_screen({}, bak1, bak2)
-    screen.add_body()
+    screen.draw_screen()
 
     assert '< GRUB_CUSTOM_UNKNOWN=foo' in win.body_lines
     assert '> GRUB_CUSTOM_UNKNOWN=bar' in win.body_lines
+
+
+def test_compare_draws_its_header_above_the_diff(tmp_path):
+    """The header half of the migration: heads go through BasicTextScreen."""
+    bak1 = write_backup(tmp_path, 'one.bak', 'GRUB_TIMEOUT=5\n')
+    bak2 = write_backup(tmp_path, 'two.bak', 'GRUB_TIMEOUT=10\n')
+
+    screen, win = make_screen({}, bak1, bak2)
+    screen.draw_screen()
+
+    assert win.header_lines == [
+        'COMPARE   ESC:back',
+        '< one.bak [#lines=1]',
+        '> two.bak [#lines=1]',
+    ]
+    assert win.body_lines[:3] == [
+        '',
+        '< GRUB_TIMEOUT=5',
+        '> GRUB_TIMEOUT=10',
+    ]
 
 
 def test_compare_leaves_caller_param_cfg_untouched(tmp_path):
@@ -116,7 +139,7 @@ def test_compare_leaves_caller_param_cfg_untouched(tmp_path):
         'GRUB_TIMEOUT=10\n')
 
     screen, _win = make_screen(param_cfg, bak1, bak2)
-    screen.add_body()
+    screen.draw_screen()
 
     assert 'GRUB_CUSTOM_UNKNOWN' not in param_cfg
     assert list(param_cfg) == ['GRUB_TIMEOUT']
