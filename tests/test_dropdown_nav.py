@@ -44,8 +44,11 @@ class FakeWin:
         self.body.row_cnt += 1
 
 
-def make_home_screen(pick_pos):
-    """Build a HomeScreen with a tall dropdown on the selected parameter."""
+def make_home_screen(pick_pos, live_key=None):
+    """Build a HomeScreen with a tall dropdown on the selected parameter.
+
+    *live_key* is the parameter whose inline edit prompt is live, if any.
+    """
     win = FakeWin(pick_pos)
     param_cfg = {
         'GRUB_TIMEOUT': {
@@ -88,6 +91,9 @@ def make_home_screen(pick_pos):
         is_active_param=lambda _name: True,
         show_hidden_params=False,
         drop_down_lines=drop_down_lines,
+        has_live_item_confirm=lambda key: key == live_key,
+        add_confirm_item_line=lambda key: (
+            win.add_body(f'prompt:{key}') if key == live_key else None),
         spins=SimpleNamespace(guide='Enums'),
         param_name_wid=16,
     )
@@ -142,6 +148,16 @@ def test_down_from_tall_dropdown_lands_on_next_parameter():
     # No TIMEOUT dropdown between the two parameters now.
     assert win.contexts[2].genre == 'DECOR'
     assert win.contexts[3].genre == 'DECOR'
+
+
+def test_live_inline_edit_replaces_the_dropdown_under_its_row():
+    """The prompt must sit next to the row whose old value it shows."""
+    screen, win = make_home_screen(pick_pos=1, live_key='GRUB_TIMEOUT')
+
+    screen.draw_body()
+
+    assert 'prompt:GRUB_TIMEOUT' in win.lines
+    assert '    detail' not in win.lines
 
 
 def test_wrapped_detail_continuations_are_not_pickable():

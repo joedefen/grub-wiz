@@ -6,6 +6,11 @@ successful GRUB write) replaces ``GrubWiz.ss``; the spinner must be rebound to
 the new stack or it keeps making decisions from the stale one.  A failed
 restore must also leave the screens untouched instead of reinitializing the
 app for a file that was never replaced.
+
+The RESTORE screen's restore and delete actions now ask with an inline
+confirmation under the picked row, so these tests drive the callback the
+prompt would run (``restore_chosen`` / ``delete_chosen``) and check separately
+that the question names the selected row.
 """
 
 import sys
@@ -87,15 +92,25 @@ def test_reset_screen_stack_rebinds_spinner():
     assert win.pick_pos == 0
 
 
+class FakeGw(SimpleNamespace):
+    """Records the questions a screen asks and the inventory refreshes."""
+
+    def __init__(self, **kwargs):
+        super().__init__(asked=[], refreshed=[], **kwargs)
+
+    def begin_confirm(self, prompt, **kwargs):
+        """Capture the inline prompt instead of drawing it."""
+        self.asked.append((prompt, kwargs))
+
+
 def make_restore_screen(restore_ok):
     """Build a RestoreScreen with fake collaborators and record callbacks."""
     win = FakeWin()
     target = Path('/tmp/20990101-000000-DEADBEEF.custom.bak')
     calls = []
-    gw = SimpleNamespace(
+    gw = FakeGw(
         ordered_backup_pairs=[('DEADBEEF', target)],
         backups={'DEADBEEF': target},
-        really_wanna=lambda _act: True,
         backup_mgr=SimpleNamespace(
             target_path=Path('/etc/default/grub'),
             restore_backup=lambda _path: restore_ok,
@@ -112,11 +127,57 @@ def make_restore_screen(restore_ok):
     return screen, win, calls
 
 
+def test_restore_asks_under_the_selected_row_before_replacing_the_source():
+    """Nothing is replaced until the inline question is answered."""
+    screen, win, calls = make_restore_screen(restore_ok=True)
+    target = screen.gw.ordered_backup_pairs[0][1]
+
+    screen.restore_ACTION()
+
+    assert calls == []
+    prompt, kwargs = screen.gw.asked[-1]
+    assert prompt == f'Restore GRUB source from {target.name}'
+    assert kwargs['scope'] == 'item'
+    assert kwargs['item_key'] == target
+
+    kwargs['on_confirm']('y')
+
+    assert calls == ['reinit', 'reset']
+    assert win.alerts == []
+
+
+def test_delete_asks_before_unlinking_the_selected_backup(tmp_path):
+    """The file survives until the inline question is confirmed."""
+    doomed = tmp_path / '20990101-000000-DEADBEEF.custom.bak'
+    doomed.write_text('state')
+    win = FakeWin()
+    gw = FakeGw(ordered_backup_pairs=[('DEADBEEF', doomed)])
+    gw.refresh_backup_list = lambda: gw.refreshed.append(True)
+    screen = RestoreScreen.__new__(RestoreScreen)
+    screen.gw = gw
+    screen.app = gw
+    screen.win = win
+
+    screen.delete_ACTION()
+
+    assert doomed.exists()
+    prompt, kwargs = gw.asked[-1]
+    assert prompt == f'Delete {doomed.name}'
+    assert kwargs['scope'] == 'item'
+    assert kwargs['item_key'] == doomed
+
+    kwargs['on_confirm']('y')
+
+    assert not doomed.exists()
+    assert gw.refreshed == [True]
+
+
 def test_failed_restore_does_not_reinitialize():
     """restore_backup() returning False must abort before any rebuild."""
     screen, win, calls = make_restore_screen(restore_ok=False)
+    target = screen.gw.ordered_backup_pairs[0][1]
 
-    screen.restore_ACTION()
+    screen.restore_chosen(target)
 
     assert calls == []
     assert win.alerts == ['ERR: restore of '
@@ -133,7 +194,7 @@ def test_failed_restore_reports_the_reason_from_backup_mgr():
     screen, win, _calls = make_restore_screen(restore_ok=False)
     screen.gw.backup_mgr.last_error = 'stock.bak contains command substitution on line 1'
 
-    screen.restore_ACTION()
+    screen.restore_chosen(screen.gw.ordered_backup_pairs[0][1])
 
     assert len(win.alerts) == 1
     assert 'command substitution on line 1' in win.alerts[0]
@@ -147,7 +208,7 @@ def test_successful_restore_rebuilds_with_fresh_stack():
     """
     screen, win, calls = make_restore_screen(restore_ok=True)
 
-    screen.restore_ACTION()
+    screen.restore_chosen(screen.gw.ordered_backup_pairs[0][1])
 
     assert calls == ['reinit', 'reset']
     assert screen.gw.grub_checksum == 'DEADBEEF'
@@ -164,7 +225,7 @@ def test_successful_restore_notifies_without_an_alert():
     """
     screen, win, _calls = make_restore_screen(restore_ok=True)
 
-    screen.restore_ACTION()
+    screen.restore_chosen(screen.gw.ordered_backup_pairs[0][1])
 
     assert win.alerts == []
     assert len(win.flashes) == 1
@@ -181,10 +242,9 @@ def test_restore_uses_the_selected_path_not_checksum_lookup():
     selected = Path('/tmp/20990101-000000-DEADBEEF.selected.bak')
     other = Path('/tmp/20990102-000000-DEADBEEF.other.bak')
     restored = []
-    gw = SimpleNamespace(
+    gw = FakeGw(
         ordered_backup_pairs=[('DEADBEEF', selected)],
         backups={'DEADBEEF': other},
-        really_wanna=lambda _act: True,
         backup_mgr=SimpleNamespace(
             target_path=Path('/etc/default/grub'),
             restore_backup=lambda path: restored.append(path) or True,
@@ -199,6 +259,6 @@ def test_restore_uses_the_selected_path_not_checksum_lookup():
     screen.app = gw
     screen.win = win
 
-    screen.restore_ACTION()
+    screen.restore_chosen(selected)
 
     assert restored == [selected]

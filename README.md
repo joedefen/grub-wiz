@@ -64,7 +64,7 @@ Running `grub-wiz` brings a screen similar to:
 NOTES:
 * `grub-wiz` is only showing "active" parameters (the uncommented ones in the grub file); to add parameters, see them all with the `s` key. The parameters that are inactive will be marked with an `✘`.
 * In the header, `⮜–⮞` indicates you can cycle through a list of values with the right/left arrow keys.
-* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform.
+* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform. The value is typed on a line right under that parameter — `⚠️ Edit value, then ENTER or ESC: 5│` — so the old value stays on screen while you edit it (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). A dim line below says what the value may be (`-1 for infinite, 0 or positive integer`), so the prompt itself stays short; an answer that fails the check leaves the text in place with the prompt changed to `⚠️ Re-edit value, then ENTER or ESC`. `E` runs the same editor in expert mode, with minimal checks. Only the few long parameters (`GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, …) still open a full-screen dialog, because several rows of text do not fit on one line.
 * When you done editing, then type `w` to write the parameter after you **review** them.
 * Edits are held in memory until you write them, so leaving with `q` **or Ctrl-C** asks before discarding them (on the RESTORE screen either key just goes back one screen).
 * For editing the `CMDLINE` parameters, see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
@@ -96,7 +96,7 @@ NOTES:
 * Warnings are be dismissed by fixing the values or by inhibiting the warning (with the `x` key).
 * If you inhibit warnings, they remain suppressed in future sessions until allowed.
 * Lines on this screen and others that end with `▶` are truncated. To see the rest of the text, visit that line.
-* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
+* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`.  The confirmation appears inline as a header line (`⚠️ Commit changes and update GRUB  [Press "y" or ESC]`), so the review stays visible: press `y` to commit, or `ESC` to cancel. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
 
 **Automatic Initramfs Rebuild Detection** (Major Safety Feature)
 
@@ -162,22 +162,24 @@ When you enter the restore screen by typing `R` from the EDIT screen, it looks s
  RESTORE [r]estore [d]el [t]ag [v]iew [c]mp [b]aseline    ESC:back ?:help [q]uit
 ───────────────────────────────────────────────────────────────────────────────────
 >●     20261025-083036-s559DCA.~Timeout+1.bak
+        ⚠️ Edit tag, then ENTER or ESC: ~Timeout+1│
        20261025-074512-s559DCA.BASELINE.bak
        20261024-221007-s0A91E4.~Theme.bak
    CMP 20261024-190231-s0A91E4.RESYNC.bak
 ```
+The second line is what pressing `t` looks like: the prompt is drawn under the row being renamed, seeded with the current tag and edited in place (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). `[r]estore` and `[d]el` use the same place, asking one-key questions there instead of replacing the screen with a dialog: `⚠️ Restore GRUB source from …  [Press "y" or ESC]` and `⚠️ Delete …  [Press "y" or ESC]`. Nothing is written or removed until `y` is pressed, and `ESC` leaves the backup untouched.
 
 *Backup and restore features*:
  - the leading `●` indicates it is the backup for the current session.
  - backups of `/etc/default/grub` are stored in `~/.config/grub-wiz` (mode `0700`; only your user can read them)
- - backups are named `YYYYMMDD-HHMMSS-s{6-hex-checksum}.{tag}.bak` and are listed newest first. The timestamp is the primary clue; the tag is a hint that is filled in automatically, so you are never asked to name a backup.
+ - backups are named `YYYYMMDD-HHMMSS-s{6-hex-checksum}.{tag}.bak` and are listed newest first. The timestamp is the primary clue; the tag is a hint that is filled in automatically, so committing never asks you to name a backup. Only the explicit `[t]ag` action renames one.
  - `BASELINE` is the only backup taken at start-up: it is written once, when the backup directory is still empty. Starting grub-wiz writes nothing else — a backup is created when grub-wiz *changes* grub, so a hand edit or a package update between sessions is not snapshotted. `RESYNC` means grub-wiz updated GRUB while REVIEW had nothing to report; only one `RESYNC` per content is kept, because a new one deletes the `RESYNC` standing next to it. A name with **no tag at all** means a commit whose diff could not be classified (for example a parameter moved between "commented out" and "deleted").
  - a written change is tagged `+` (a parameter was activated), `-` (a parameter was commented out) or `~` (only values changed), followed by an abbreviated parameter name and `+N` when more than one parameter moved. For example `~Timeout+1` means two parameters changed and `Timeout` is the first of them.
  - identical content is otherwise kept; two different states may hold the same bytes, and one of them disappearing would lose history.
  - the inventory is capped at **24** files. At start-up, while there are more than 24, grub-wiz deletes from the oldest end and stops as soon as it is back to 24. Two records are privileged: the oldest one is never removed (it is the earliest state you can return to), and when the oldest removable record carries a descriptive tag and the record immediately after it holds the same bytes and is a `RESYNC`, that `RESYNC` goes instead — so the tag that says *what* changed survives. Only adjacent records are compared.
  - the order is the filename, so the timestamp decides; a file's modification time is deliberately ignored (a bulk copy rewrites it). A summary such as `Purge: 27 -> 24 backups.` is printed before the screens open. `grub-wiz -k` (or `--keep-all-bak`) keeps every backup and skips the purge for that launch.
  - files written by older versions (`YYYYMMDD-HHMMSS-{8-hex}.{tag}.bak`) stay visible, restorable and renameable, and take part in the purge like any other.
- - tags use `[-_+~A-Za-z0-9]` characters (spaces are converted to "-"); press `t` on the RESTORE screen to rename one.
+ - tags use `[-_+~A-Za-z0-9]` characters (spaces are converted to "-"); press `t` on the RESTORE screen to rename one. The new tag is typed inline under that backup's row (no dialog replaces the screen), and a rejected tag is asked for again with the bad text still editable. A rename that cannot happen — the tag is already taken, or the file cannot be moved — is reported on the transient message line rather than in a dialog, so the listing and the name that collided stay visible.
  - if a backup is restored, `grub-wiz` re-initializes using the restored grub file and returns to the main screen. **Restore is intentionally a two-step operation:** it replaces `/etc/default/grub` but does *not* regenerate `grub.cfg`. The restored values become active only when you write from the main screen, which runs the normal atomic write and `update-grub` path. This lets you restore an older configuration as a baseline for further edits without changing the current boot menu in the middle of the session.
  - the `[v]iew` action bring up the VIEW screen to peruse the selected `.bak` file.
  - the `[c]mp` action compares the selected `.bak` to the `CMP` (or baseline) `.bak`, and you can set the `baseline` with the `[b]aseline` action. And example the COMPARE screen is below.  As you can see, it just show the parameter values difference, not different comments or blank lines or whatnot.

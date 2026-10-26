@@ -1,9 +1,9 @@
 """Destructive confirmations must default to "no" (AUDIT.md H8).
 
-``GrubWiz.really_wanna()`` guards restore, delete and commit.  Pressing Enter
-on an empty, pre-seeded prompt must never confirm: only the whole word
-``yes`` may proceed, so a stray keypress or a habitual "y" cannot restore a
-backup, delete one, or rewrite the boot configuration.
+``GrubWiz.really_wanna()`` guards quitting with unapplied changes (the RESTORE
+restore/delete actions ask inline instead).  Pressing Enter on an empty,
+pre-seeded prompt must never confirm: only the whole word ``yes`` may proceed,
+so a stray keypress or a habitual "y" cannot discard the session.
 """
 
 import grub_wiz.main as main_mod

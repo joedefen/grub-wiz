@@ -58,6 +58,10 @@ TAKEN_NAV_KEYS = {
 # same quit request, so both get the "discard unapplied changes?" check.
 QUIT_KEY = 0x3
 
+# A backup tag ends up in a filename, so only the characters BackupTag itself
+# generates are accepted; runs of spaces or dashes fold to a single '-'.
+BACKUP_TAG_PATTERN = re.compile(r'^[-_+~A-Za-z0-9]+$')
+
 
 class Tab:
     """Column layout for the body: parameter name left, value right."""
@@ -202,6 +206,83 @@ class InlineSearchPrompt:
         return self._editor.cursor_pos
 
 
+class InlineConfirmPrompt:
+    """A confirmation drawn in place, without an overlay dialog.
+
+    ``console_window.InlineConfirmation`` owns the key handling and, in ``y``
+    mode, turns one printable keystroke into a confirmed/cancelled result.  This
+    adapter adds the one-line rendering used by the screens and remembers the
+    callback that continues the action after the prompt is gone.
+
+    ``scope`` tells the screen where the line belongs: ``'header'`` for an
+    action that applies to the whole screen or program (drawn as the last
+    header line, just before the divider), ``'item'`` for an action that only
+    concerns the picked row (drawn directly after that row).
+    """
+
+    def __init__(self) -> None:
+        self._editor = InlineConfirmation()
+        self.prompt = ''
+        self.hint = ''
+        self.scope = 'header'
+        self.item_key = None
+        self.on_confirm = None
+        self.on_cancel = None
+
+    def start(self, prompt, *, on_confirm=None, on_cancel=None, mode='y',
+              identity=None, seed='', scope='header', item_key=None,
+              hint='') -> None:
+        self.prompt = prompt
+        self.hint = hint
+        self.scope = scope
+        self.item_key = item_key
+        self.on_confirm = on_confirm
+        self.on_cancel = on_cancel
+        self._editor.start(action_type=None, identity=identity,
+                           mode=mode, initial=seed)
+
+    def handle_key(self, key):
+        """Return ``'continue'``, ``'confirmed'`` or ``'cancelled'``.
+
+        ``key`` is None when the main loop woke on its idle timeout/resize;
+        that is not an answer, so the prompt stays live.
+        """
+        if not self.is_active:
+            return 'inactive'
+        if key is None:
+            return 'continue'
+        return self._editor.handle_key(key)
+
+    def cancel(self) -> None:
+        self._editor.cancel()
+        self.prompt = ''
+        self.hint = ''
+        self.scope = 'header'
+        self.item_key = None
+        self.on_confirm = None
+        self.on_cancel = None
+
+    def get_display_string(self) -> str:
+        if not self.is_active:
+            return ''
+        mode = self._editor.mode or ''
+        if mode in ('Y', 'y'):
+            return f'⚠️ {self.prompt}  [Press "{mode}" or ESC]'
+        return f'⚠️ {self.prompt}: {self._editor.get_display_string()}'
+
+    @property
+    def answer(self) -> str:
+        return self._editor.input_buffer
+
+    @property
+    def is_active(self) -> bool:
+        return self._editor.active
+
+    @property
+    def mode(self):
+        return self._editor.mode
+
+
 # Note: Clue class has been replaced with Context from ConsoleWindow
 # Context usage patterns:
 #   Context(genre='DECOR') - non-pickable decorative lines (headers, separators)
@@ -228,28 +309,6 @@ class GrubWizScreen(Screen):
         """
         super().__init__(grub_wiz)
         self.gw = self.app  # Backward compatibility: gw is an alias for app
-
-    def slash_PROMPT(self, current: str):
-        """Prompt for a Python regex used to filter the current screen."""
-        hint = 'must be a valid python regex'
-        regex = None # compiled
-        pattern = current
-
-        while True:
-            prompt = f'Enter search pattern [{hint}]'
-            pattern = self.win.answer(prompt=prompt,
-                                  seed=str(pattern), height=1)
-            if pattern is None: # aborted
-                return '', None
-
-            if not pattern:
-                return '', None
-            try:
-                regex = re.compile(pattern, re.IGNORECASE)
-                return pattern, regex
-            except re.error as whynot:
-                hint = str(whynot)
-                continue
 
     # App-level navigation actions (available on all screens)
     def escape_ACTION(self):
@@ -437,7 +496,11 @@ class HomeScreen(GrubWizScreen):
                 if target_key is None:
                     target_key = ('param', param_name, 0)
                 found_current = True
-                emits = param_lines + gw.drop_down_lines(param_name)
+                # While a value is being typed on the line below, the dropdown
+                # is noise: it would push the prompt away from its row, and the
+                # row already shows the old value being replaced.
+                emits = (param_lines if gw.has_live_item_confirm(param_name) else
+                         param_lines + gw.drop_down_lines(param_name))
 
                 # Truncate if exceeds view size
                 view_size = win.scroll_view_size
@@ -458,6 +521,9 @@ class HomeScreen(GrubWizScreen):
                 for emit in emits[1:]:
                     win.add_body(emit, context=Context(genre='TRANSIENT',
                                                        pickable=False))
+                # A live inline edit sits at the end of this parameter's block,
+                # so the row above keeps showing the value being replaced.
+                gw.add_confirm_item_line(param_name)
 
         self.apply_pick_anchors(anchors, target_key)
         return found_current
@@ -637,6 +703,10 @@ class ReviewScreen(HomeScreen):
             header += f' {cnt} ✘-warns'
         header = f'{header:<24}'
         self.add_common_head2(header)
+        # A confirmation that affects the whole program goes on its own header
+        # line, immediately before the divider, so it reads as a screen-level
+        # prompt rather than as part of the selected item.
+        gw.add_confirm_header()
         # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
     def add_body(self):
@@ -743,7 +813,7 @@ class ReviewScreen(HomeScreen):
                                              warn_selected,
                                              context=Context(genre='warn', warn_key=warn_key))
 
-            if selected:
+            if selected and not gw.has_live_item_confirm(param_name):
                 emits = gw.drop_down_lines(param_name)
                 if len(emits) > 1:
                     emits = self.left_side_box(emits)
@@ -751,6 +821,10 @@ class ReviewScreen(HomeScreen):
                 for emit in emits:
                     self.win.add_body(emit, context=Context(genre='TRANSIENT',
                                                             pickable=False))
+
+            # A live inline edit is drawn under the block it changes, on this
+            # screen too: editing from REVIEW must not hide the prompt.
+            gw.add_confirm_item_line(param_name)
 
         self.apply_pick_anchors(anchors, target_key)
 
@@ -783,7 +857,7 @@ class ReviewScreen(HomeScreen):
         self.gw.show_hidden_warns = not self.gw.show_hidden_warns
 
     def write_ACTION(self):
-        """Handle 'w' key on REVIEW screen - update grub.
+        """Handle 'w' key on REVIEW screen - confirm inline, then update grub.
 
         The automatic backup tag is built here because this is the only place
         the parameter-level diff is known: update_grub() re-reads the file
@@ -793,12 +867,15 @@ class ReviewScreen(HomeScreen):
         worth a record: it is tagged RESYNC.  The test is the diff being
         empty, not change_tag() returning nothing -- a parameter moving
         between two inactive sentinels is a real edit with no value change.
+
+        The confirmation is an inline header line, not a modal dialog: writing
+        applies to the whole program, so it belongs just above the divider.
         """
         # Note: update_grub is now a critical requirement, so is_crippled only indicates
         # missing grub_cfg (which affects menu entry enumeration, not update capability)
         diffs = self.gw.get_diffs()
         tag = RESYNC_TAG if not diffs else change_tag(diffs)
-        self.gw.update_grub(tag=tag or None)
+        self.gw.begin_commit_confirm(tag or None)
 
     def slash_ACTION(self):
         """Search is not available on REVIEW; '/' is a no-op."""
@@ -867,6 +944,10 @@ class RestoreScreen(GrubWizScreen):
             self.bak_paths.append(bak_path)
             self.win.add_body(f'{prefix} {ref} {bak_path.name}',
                             context=Context(genre='backup', bak_path=bak_path))
+            # A retag prompt is about this one file, so it sits directly under
+            # the row that names it and the bare tag being edited stays
+            # readable next to the filename it will become part of.
+            gw.add_confirm_item_line(bak_path)
 
     def baseline_ACTION(self):
         """Handle 'b' key on RESTORE screen - baseline for CMP"""
@@ -890,7 +971,26 @@ class RestoreScreen(GrubWizScreen):
                     compare_screen.bak2 = ref_path
 
     def restore_ACTION(self):
-        """Handle 'r' key on RESTORE screen - restore selected backup.
+        """Handle 'r' key on RESTORE screen - ask inline, then restore.
+
+        The confirmation is drawn under the picked row and takes one key
+        (``y`` confirms, ``ESC`` cancels), so the listing and the name of the
+        file being restored stay on screen.  The restore itself runs from the
+        prompt callback (``restore_chosen``) because the answer arrives after
+        this action has returned.
+        """
+        gw = self.gw
+        idx = self.win.pick_pos
+        if not 0 <= idx < len(gw.ordered_backup_pairs):
+            return
+        target = gw.ordered_backup_pairs[idx][1]
+        gw.begin_confirm(
+            f'Restore GRUB source from {target.name}',
+            on_confirm=lambda _answer: self.restore_chosen(target),
+            scope='item', item_key=target)
+
+    def restore_chosen(self, target):
+        """Replace the GRUB source with *target* and reload the screens.
 
         Restore is deliberately the first half of a two-step operation: it
         replaces the GRUB *source* file (the backup manager's target, normally
@@ -902,12 +1002,6 @@ class RestoreScreen(GrubWizScreen):
         reboot churn a write can trigger).
         """
         gw = self.gw
-        idx = self.win.pick_pos
-        if not 0 <= idx < len(gw.ordered_backup_pairs):
-            return
-        target = gw.ordered_backup_pairs[idx][1]
-        if not gw.really_wanna(f'restore {target.name!r}'):
-            return
         # Restore the row the user selected, not a checksum lookup: two
         # files may share content and therefore a checksum.
         # Only reinitialize when the file really was replaced.  A failed
@@ -938,44 +1032,43 @@ class RestoreScreen(GrubWizScreen):
         gw.grub_checksum = gw.backup_mgr.calc_checksum(gw.backup_mgr.target_path)
 
     def delete_ACTION(self):
-        """Handle 'd' key on RESTORE screen - delete selected backup"""
+        """Handle 'd' key on RESTORE screen - ask inline, then unlink.
+
+        One key answers (``y`` or ``ESC``) and the prompt sits under the row it
+        would remove.  The unlink runs from the callback (``delete_chosen``)
+        once the question is gone.
+        """
         gw = self.gw
         idx = self.win.pick_pos
         if 0 <= idx < len(gw.ordered_backup_pairs):
             doomed = gw.ordered_backup_pairs[idx][1]
-            if gw.really_wanna(f'remove {doomed.name!r}'):
-                try:
-                    os.unlink(doomed)
-                except OSError as exce:
-                    self.win.alert(
-                        message=f'ERR: unlink({doomed}) [{exce}]')
-                gw.refresh_backup_list()
+            gw.begin_confirm(
+                f'Delete {doomed.name}',
+                on_confirm=lambda _answer: self.delete_chosen(doomed),
+                scope='item', item_key=doomed)
+
+    def delete_chosen(self, doomed):
+        """Unlink *doomed* and rebuild the inventory."""
+        gw = self.gw
+        try:
+            os.unlink(doomed)
+        except OSError as exce:
+            self.win.alert(message=f'ERR: unlink({doomed}) [{exce}]')
+        gw.refresh_backup_list()
 
     def tag_ACTION(self):
-        """Handle 't' key on RESTORE screen - tag/retag selected backup"""
+        """Handle 't' key on RESTORE screen - tag/retag selected backup
+
+        The tag is asked for inline, under the picked row.  The rename itself
+        runs from the prompt's callback (``GrubWiz.apply_backup_tag``) because
+        the answer arrives after this action has already returned.
+        """
         gw = self.gw
         idx = self.win.pick_pos
         if 0 <= idx < len(gw.ordered_backup_pairs):
             chosen = gw.ordered_backup_pairs[idx][1]
             current = gw.backup_mgr.tag_from_name(chosen.name)
-            tag = gw.request_backup_tag(f'Enter tag for {chosen.name}',
-                                              seed=current)
-            if tag:
-                new_name = gw.backup_mgr.retagged_name(chosen.name, tag)
-                new_path = chosen.parent / new_name
-                # os.rename() silently replaces an existing destination on
-                # POSIX, which would destroy another backup when a tag is
-                # reused.  Refuse instead.
-                if new_path != chosen and os.path.lexists(new_path):
-                    self.win.alert(
-                        message=f'ERR: {new_path.name} already exists')
-                elif new_path != chosen:
-                    try:
-                        os.rename(chosen, new_path)
-                    except OSError as exce:
-                        self.win.alert(
-                            message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]')
-                gw.refresh_backup_list()
+            gw.request_backup_tag(chosen, seed=current)
 
     def view_ACTION(self):
         """Handle 'v' key on RESTORE screen - view selected backup"""
@@ -1462,7 +1555,77 @@ class GrubWiz:
         self.bak_lines = None # the currently viewed .bak file
         self.bak_path = None
         self.screens = []
+        self.inline_confirm = InlineConfirmPrompt()
+        self._confirm_prev_passthrough = False
         self.reinit_gw()
+
+    ####################################################################
+    # Inline (non-modal) confirmations
+    #
+    # A destructive key used to open win.answer(), which replaces the whole
+    # screen with a dialog.  The confirmation is now an ordinary line: a header
+    # line for actions that apply to the whole screen/program, or a body line
+    # after the picked row for actions that concern only that item.  The main
+    # loop routes every key to the prompt while it is live, so an action key
+    # cannot fire underneath it.
+    ####################################################################
+
+    def begin_confirm(self, prompt, *, on_confirm=None, on_cancel=None,
+                      mode='y', identity=None, seed='', scope='header',
+                      item_key=None, hint=''):
+        """Start an inline confirmation; return False without a window.
+
+        *hint* is optional text drawn dim on the line below an item-scoped
+        prompt: what the value may be, so the prompt itself stays short.
+        """
+        if self.win is None:
+            return False
+        self.inline_confirm.start(prompt, on_confirm=on_confirm,
+                                  on_cancel=on_cancel, mode=mode,
+                                  identity=identity, seed=seed,
+                                  scope=scope, item_key=item_key, hint=hint)
+        # Passthrough already forwards printable keys, the editing keys and
+        # ESC, so no handled_keys juggling is needed to drive the widget.
+        self._confirm_prev_passthrough = self.win.passthrough_mode
+        self.win.passthrough_mode = True
+        return True
+
+    def end_confirm(self):
+        """Cancel the inline prompt and restore the window's key routing."""
+        self.inline_confirm.cancel()
+        if self.win is not None:
+            self.win.passthrough_mode = self._confirm_prev_passthrough
+
+    def handle_confirm_key(self, key):
+        """Route one key to the live inline confirmation.
+
+        Returns True when the prompt consumed the key.  A confirmed answer is
+        delivered to the callback after the prompt has been torn down, so the
+        callback is free to start another prompt (for example to re-ask after
+        bad input).
+        """
+        prompt = self.inline_confirm
+        if not prompt.is_active:
+            return False
+        result = prompt.handle_key(key)
+        if result == 'confirmed':
+            answer, callback = prompt.answer, prompt.on_confirm
+            self.end_confirm()
+            if callback:
+                callback(answer)
+        elif result == 'cancelled':
+            callback = prompt.on_cancel
+            self.end_confirm()
+            if callback:
+                callback()
+        return True
+
+    def begin_commit_confirm(self, tag=None):
+        """Ask inline, then commit; the action applies to the whole program."""
+        return self.begin_confirm(
+            'Commit changes and update GRUB',
+            on_confirm=lambda _answer: self.update_grub(tag=tag, confirmed=True),
+            scope='header')
 
     def reset_screen_stack(self):
         """Rebuild the screen stack after /etc/default/grub is replaced.
@@ -1843,6 +2006,50 @@ class GrubWiz:
         mode = self.spins.fancy_headers
         self.win.add_fancy_header(line, mode=mode)
 
+    def add_confirm_header(self):
+        """Draw a program/screen-scoped confirmation as the last header line.
+
+        ``add_header`` rather than ``add_fancy_header``: the bracketed key hint
+        is literal text here, not the ``[x]`` markup the fancy parser would
+        consume.
+        """
+        prompt = self.inline_confirm
+        if not prompt.is_active or prompt.scope != 'header':
+            return
+        self.win.add_header(prompt.get_display_string(), attr=cs.A_BOLD)
+
+    def add_confirm_item_line(self, item_key):
+        """Draw an item-scoped confirmation directly below that item.
+
+        A screen calls this from its body builder after emitting the row whose
+        stable identity is *item_key*.  The line is detail, not a pick target,
+        so the row the prompt concerns stays selected while it is live.
+        """
+        prompt = self.inline_confirm
+        if (not prompt.is_active or prompt.scope != 'item'
+                or prompt.item_key != item_key):
+            return
+        self.win.add_body(prompt.get_display_string(), attr=cs.A_BOLD,
+                          context=Context(genre='TRANSIENT', pickable=False))
+        if prompt.hint:
+            # What the value may be, kept on its own dim line: the prompt line
+            # then only has to say how to finish, which stays short.
+            cols = getattr(self.win, 'cols', 80)
+            hint = truncate_to_width(prompt.hint, max(10, cols - 2))
+            self.win.add_body(hint, attr=cs.A_DIM,
+                              context=Context(genre='TRANSIENT', pickable=False))
+
+    def has_live_item_confirm(self, item_key):
+        """True when the live inline prompt belongs to *item_key*.
+
+        Screens use this to drop the dropdown under the row that is being
+        edited: the prompt is the only thing the keys can act on, and the
+        detail lines would otherwise push it off the visible area.
+        """
+        prompt = self.inline_confirm
+        return bool(prompt.is_active and prompt.scope == 'item'
+                    and prompt.item_key == item_key)
+
 
 
 
@@ -1960,98 +2167,138 @@ class GrubWiz:
     def _answer_height(param_name):
         return 5 if param_name in GrubWiz.long_params else 1
 
-    def edit_param(self, win, name, regex):
-        """ Prompt user for answer until gets it right"""
+    def _param_edit_hint(self, name, regex):
+        """Short reminder of what the parameter accepts (dialog title hint)."""
+        human_desc = self.param_cfg.get(name, {}).get('edit_re_human', '')
+        if human_desc:
+            return human_desc
+        if not regex:
+            return ''
+        pure_regex = (regex.pattern if hasattr(regex, 'pattern')
+                      else str(regex).encode().decode('unicode_escape'))
+        return f'pat={pure_regex}'
 
+    def _check_param_value(self, name, value, regex):
+        """Return why *value* is refused, or '' when it may be stored.
+
+        Two boundaries are checked: the parameter's GRUB semantics (its
+        ``edit_re``), then the shell boundary, because the value is written
+        verbatim as ``PARAM=value`` into a file that distro scripts source.
+        Command substitution is allowed only when this parameter's config opts
+        in (see ``_re_specs_.re_quoted_or_command_sub``).
+        """
+        cfg = self.param_cfg.get(name, {})
+        if regex:
+            # Handle both compiled patterns and string patterns
+            if hasattr(regex, 'match'):
+                matched = regex.match(str(value))
+            else:
+                matched = re.match(regex, str(value))
+            if not matched:
+                if cfg.get('edit_re_human'):
+                    return f'must be: {cfg["edit_re_human"]}'
+                pure_regex = (regex.pattern if hasattr(regex, 'pattern')
+                              else str(regex).encode().decode('unicode_escape'))
+                return f'must match: {pure_regex}'
+        ok, reason = check_shell_value(
+            value, allow_command_sub=bool(cfg.get('allow_command_sub', False)))
+        if not ok:
+            return f'must be a safe shell value ({reason})'
+        return ''
+
+    @staticmethod
+    def _check_expert_value(value):
+        """Expert mode still has to stay one shell word, nothing more.
+
+        Expert mode is an explicit administrator escape hatch, so a whole-value
+        command substitution is accepted here.
+        """
+        ok, reason = check_shell_value(value, allow_command_sub=True)
+        return '' if ok else f'must be a safe shell value ({reason})'
+
+    def begin_param_edit(self, name, check, seed=None, hint='', invalid=False):
+        """Type a value on a line under its parameter row.
+
+        *check* returns '' for an acceptable answer and the reason otherwise.
+        *hint* is drawn dim on the line below the prompt and says what the
+        value may be -- before any mistake, not only after one -- so the
+        prompt line itself only has to say how to finish.  *invalid* only
+        changes its wording: the refused text stays in the buffer, editable.
+
+        The buffer starts as a copy of the current value: the row above keeps
+        showing the old value, and ESC leaves ``param_values`` untouched.
+        """
+        if seed is None:
+            seed = str(self.param_values.get(name, ''))
+        prompt = ('Re-edit value, then ENTER or ESC' if invalid
+                  else 'Edit value, then ENTER or ESC')
+        return self.begin_confirm(
+            prompt,
+            on_confirm=lambda answer: self._apply_param_edit(
+                name, answer, check, hint),
+            mode='text', seed=seed, scope='item', item_key=name, hint=hint)
+
+    def _apply_param_edit(self, name, value, check, hint=''):
+        """Store the inline answer, or ask again with the text still there."""
+        if check(value):
+            self.begin_param_edit(name, check, seed=value, hint=hint,
+                                  invalid=True)
+            return
+        self.param_values[name] = value
+
+    def edit_param(self, win, name, regex):
+        """Ask for the value until the answer is valid.
+
+        A one-row answer is typed in place, on a line under the parameter row,
+        so the old value and the value being typed are on screen together and
+        no dialog replaces the list.  A ``long_params`` answer (see
+        :meth:`_answer_height`) keeps the full-screen dialog: several rows of
+        text cannot be edited in a one-line buffer.
+        """
         # Check if this param uses EXPERT_EDIT mode
         if is_expert_edit(regex):
             self.expert_edit_param(win, name)
             return
 
+        check = lambda value: self._check_param_value(name, value, regex)  # noqa: E731
+        if self._answer_height(name) == 1:
+            self.begin_param_edit(name, check,
+                                  hint=self._param_edit_hint(name, regex))
+            return
+
         value = self.param_values[name]
-        valid = False
-        hint = ''
-
-        # Get human description from config
-        cfg = self.param_cfg.get(name, {})
-        human_desc = cfg.get('edit_re_human', '')
-
-        if human_desc:
-            hint = human_desc
-        elif regex:
-            # Fallback to regex pattern if no human description
-            if hasattr(regex, 'pattern'):
-                pure_regex = regex.pattern
-            else:
-                pure_regex = str(regex).encode().decode('unicode_escape')
-            hint = f'pat={pure_regex}'
-
-        while not valid:
+        hint = self._param_edit_hint(name, regex)
+        while True:
             prompt = f'Edit {name} [{hint}]'
             value = win.answer(prompt=prompt, seed=str(value),
                                height=self._answer_height(name))
             if value is None: # aborted
                 return
-            valid = True # until proven otherwise
-
-            # First check regex if provided
-            if regex:
-                # Handle both compiled patterns and string patterns
-                if hasattr(regex, 'match'):
-                    match_result = regex.match(str(value))
-                else:
-                    match_result = re.match(regex, str(value))
-
-                if not match_result:
-                    valid = False
-                    # Use human description in error message
-                    if human_desc:
-                        hint = f'must be: {human_desc}'
-                    else:
-                        if hasattr(regex, 'pattern'):
-                            pure_regex = regex.pattern
-                        else:
-                            pure_regex = str(regex).encode().decode('unicode_escape')
-                        hint = f'must match: {pure_regex}'
-                    win.flash('Invalid input - please try again', duration=1.5)
-                    continue
-
-            # Then validate the shell boundary.  The value is written verbatim
-            # as `PARAM=value` in a file that distro scripts source, so it must
-            # stay one shell word; the regex above only checks GRUB semantics.
-            # Command substitution is allowed only when this parameter's
-            # config opts in (see _re_specs_.re_quoted_or_command_sub).
-            ok, reason = check_shell_value(
-                value, allow_command_sub=bool(cfg.get('allow_command_sub', False)))
-            if not ok:
-                valid = False
-                hint = f'must be a safe shell value ({reason})'
-                win.flash(f'Unsafe value - {reason}', duration=2.0)
-
+            hint = check(value)
+            if not hint:
+                break
+            win.flash(f'Invalid input - {hint}', duration=1.5)
         self.param_values[name] = value
 
     def expert_edit_param(self, win, name):
         """ Expert mode edit with minimal validation - escape hatch for grub-wiz errors """
-        value = self.param_values[name]
-        valid = False
-        hint = 'expert mode: minimal checks'
+        if self._answer_height(name) == 1:
+            self.begin_param_edit(name, self._check_expert_value,
+                                  hint='expert mode: minimal checks')
+            return
 
-        while not valid:
+        value = self.param_values[name]
+        hint = 'expert mode: minimal checks'
+        while True:
             prompt = f'Edit {name} [EXPERT MODE: {hint}]'
             value = win.answer(prompt=prompt, seed=str(value),
                                height=self._answer_height(name))
             if value is None: # aborted
                 return
-
-            # Minimal validation: the value must still stay one shell word.
-            # Expert mode is an explicit administrator escape hatch, so a
-            # whole-value command substitution is accepted here.
-            ok, reason = check_shell_value(value, allow_command_sub=True)
-            valid = ok
-            if not ok:
-                hint = f'must be a safe shell value ({reason})'
-                win.flash(f'Unsafe value - {reason}', duration=2.0)
-
+            hint = self._check_expert_value(value)
+            if not hint:
+                break
+            win.flash(f'Unsafe value - {hint}', duration=2.0)
         self.param_values[name] = value
 
     def _is_valid_shell_token(self, value, allow_command_sub=False):
@@ -2081,30 +2328,72 @@ class GrubWiz:
             reverse=True,
         )
 
-    def request_backup_tag(self, prompt, seed=''):
-        """ Prompt user for a valid tag ... turn spaces into '-'
-         automatically
+    @staticmethod
+    def fold_backup_tag(answer):
+        """Fold an entered tag into on-disk form without judging it.
 
         Generated tags use '+', '-' and '~', so a handwritten tag may use them
-         too; spaces are still rejected.  This prompt is only reachable from
-         the RESTORE screen's retag action: a backup is never named by asking.
+        too; runs of spaces and dashes become a single '-'.
         """
-        regex = r'^[-_+~A-Za-z0-9]+$'
-        hint = f'regex={regex}'
-        prompt_text = prompt
-        while True:
-            answer = self.win.answer(seed=seed,
-                        prompt=f"{prompt_text} [{hint}]", height=1)
-            if answer is None:
-                return None
-            answer = answer.strip()
-            answer = re.sub(r'[-\s]+', '-', answer)
-            if re.match(regex, answer):
-                return answer
-            # Say why the prompt is being repeated and keep the bad input
-            # editable instead of silently asking again.
-            prompt_text = f'Invalid tag; {prompt}'
-            seed = answer
+        return re.sub(r'[-\s]+', '-', (answer or '').strip())
+
+    @classmethod
+    def is_valid_backup_tag(cls, tag):
+        """True when *tag* is a name BackupMgr can put in a filename."""
+        return bool(BACKUP_TAG_PATTERN.match(tag or ''))
+
+    def request_backup_tag(self, chosen, seed='', invalid=False):
+        """Ask, in place, for the tag of the backup *chosen*.
+
+        This used to be a blocking ``win.answer()`` dialog, which replaced the
+        whole screen while the user typed.  The prompt is now an ordinary body
+        line directly below the backup it renames, seeded with the current tag
+        and editable with the caret/arrow keys, so the listing stays visible
+        and it is obvious which file is being changed.
+
+        The answer comes back through the callback (``handle_confirm_key``
+        runs it once the line is gone), so nothing is returned here.  When
+        *invalid* is set the prompt is restated after a rejected answer; the
+        bad text is still in the buffer, which is what the old blocking loop
+        did by asking again.
+
+        Only the RESTORE screen's retag action reaches this: a backup is never
+        named by asking.  Returns False when there is no window to draw in.
+        """
+        prompt = ('Invalid tag, then ENTER or ESC' if invalid
+                  else 'Edit tag, then ENTER or ESC')
+        return self.begin_confirm(
+            prompt,
+            on_confirm=lambda answer: self.apply_backup_tag(chosen, answer),
+            mode='text', seed=seed, scope='item', item_key=chosen)
+
+    def apply_backup_tag(self, chosen, answer):
+        """Rename *chosen* to the tag the inline prompt accepted.
+
+        A rejected answer asks again with the offending text still editable.
+        ``os.rename()`` silently replaces an existing destination on POSIX,
+        which would destroy another backup when a tag is reused, so an
+        occupied target is refused with a flash message: the listing and the
+        name that collided stay visible, which a modal alert would hide.
+        """
+        tag = self.fold_backup_tag(answer)
+        if not self.is_valid_backup_tag(tag):
+            self.request_backup_tag(chosen, seed=tag, invalid=True)
+            return
+        new_name = self.backup_mgr.retagged_name(chosen.name, tag)
+        new_path = chosen.parent / new_name
+        if new_path != chosen:
+            if os.path.lexists(new_path):
+                self.win.flash(message=f'ERR: {new_path.name} already exists',
+                               duration=3.0)
+            else:
+                try:
+                    os.rename(chosen, new_path)
+                except OSError as exce:
+                    self.win.flash(
+                        message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]',
+                        duration=3.0)
+        self.refresh_backup_list()
 
     def do_start_up_backup(self):
         """Record the first state ever seen, and nothing else.
@@ -2147,6 +2436,11 @@ class GrubWiz:
         destroyed by a stray keypress.  Confirmation requires the entire
         answer to be ``yes`` (case/whitespace insensitive); ``y``, ``yeah``
         and any other prefix or typo are treated as a refusal.
+
+        The RESTORE screen no longer asks this way: its restore and delete
+        actions use the inline, one-key ``y``/``ESC`` confirmation under the
+        picked row.  This blocking prompt is kept for quitting with unapplied
+        edits, where losing work deserves a typed answer.
         """
         # Ensure passthrough mode is off before prompting
         self.win.passthrough_mode = False
@@ -2187,13 +2481,15 @@ class GrubWiz:
             return False
         return self.confirm_quit()
 
-    def update_grub(self, tag=None):
+    def update_grub(self, tag=None, confirmed=False):
         """Commit staged changes, update GRUB, and offer reboot/poweroff.
 
         *tag* is the automatic backup tag built by the REVIEW screen from the
-         pending diff, or None when nothing could classify the change.
+        pending diff, or None when nothing could classify the change.
+        *confirmed* is True when the inline prompt already got the user's
+        answer, so the blocking dialog must not ask a second time.
         """
-        if not self.really_wanna('commit changes and update GRUB'):
+        if not confirmed and not self.really_wanna('commit changes and update GRUB'):
             return
 
         diffs = self.get_diffs()
@@ -2427,6 +2723,14 @@ class GrubWiz:
                 pass
 
             if key is not None:
+                # A live inline confirmation owns every key: ESC cancels, the
+                # confirming key continues the action, and nothing can trigger
+                # an action key underneath the prompt.
+                if self.inline_confirm.is_active:
+                    self.handle_confirm_key(key)
+                    win.clear()
+                    continue
+
                 # Ctrl-C is the quit key too.  Handle it before the search bars
                 # and passthrough mode can swallow it, and give it the same
                 # unapplied-changes check as 'q' (spinner.do_key never sees it).

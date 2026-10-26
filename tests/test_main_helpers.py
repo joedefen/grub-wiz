@@ -5,18 +5,21 @@ writes, how values are activated, and how backup tags are formed, so they are
 worth pinning without constructing a terminal.
 """
 
+import curses as cs
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from grub_wiz.BackupMgr import RESYNC_TAG
+from grub_wiz import main as main_module
+from grub_wiz.BackupMgr import RESYNC_TAG, BackupMgr
 from grub_wiz.GrubFile import GrubFile
 from grub_wiz.main import (
     QUIT_KEY,
     RESTORE_ST,
     GrubWiz,
+    InlineConfirmPrompt,
     ReviewScreen,
     Tab,
     display_width,
@@ -172,41 +175,149 @@ def test_deactivate_is_a_noop_for_inactive_params():
 
 # --- backup tags -----------------------------------------------------------
 
-class FakeWin:
-    def __init__(self, answers):
-        self.answers = list(answers)
-        self.calls = []
+class FakeTagWin:
+    """Just enough window to start an inline prompt and report messages."""
 
-    def answer(self, prompt=None, seed=None, height=1):
-        self.calls.append({'prompt': prompt, 'seed': seed, 'height': height})
-        return self.answers.pop(0)
+    def __init__(self):
+        self.passthrough_mode = False
+        self.flashes = []
+
+    def flash(self, message='', duration=2.0):
+        self.flashes.append((message, duration))
 
 
-def test_request_backup_tag_normalizes_and_reprompts():
+def make_tag_gw():
     gw = object.__new__(GrubWiz)
-    gw.win = FakeWin(['bad tag!', 'good tag'])
-
-    assert gw.request_backup_tag('Enter a tag') == 'good-tag'
-
-    assert gw.win.calls[0]['prompt'].startswith('Enter a tag')
-    assert gw.win.calls[0]['seed'] == ''
-    assert gw.win.calls[1]['prompt'].startswith('Invalid tag;')
-    assert gw.win.calls[1]['seed'] == 'bad-tag!'
-
-
-def test_request_backup_tag_cancel_returns_none():
-    gw = object.__new__(GrubWiz)
-    gw.win = FakeWin([None])
-
-    assert gw.request_backup_tag('Enter a tag') is None
+    gw.win = FakeTagWin()
+    gw.inline_confirm = InlineConfirmPrompt()
+    gw._confirm_prev_passthrough = False
+    gw.backup_mgr = FakeBackupMgr()
+    gw.refreshed = []
+    gw.refresh_backup_list = lambda: gw.refreshed.append(True)
+    return gw
 
 
-def test_request_backup_tag_accepts_generated_characters():
+def type_and_enter(gw, text, clear=0):
+    """Type *text* after deleting *clear* seeded characters, then Enter."""
+    for _ in range(clear):
+        gw.handle_confirm_key(127)
+    for char in text:
+        gw.handle_confirm_key(ord(char))
+    gw.handle_confirm_key(10)
+
+
+def test_tag_prompt_is_an_item_line_seeded_with_the_current_tag():
+    chosen = Path('20261025-083036-s559DCA.~Timeout+1.bak')
+    gw = make_tag_gw()
+
+    assert gw.request_backup_tag(chosen, seed='~Timeout+1') is True
+
+    assert (gw.inline_confirm.get_display_string()
+            == '⚠️ Edit tag, then ENTER or ESC: ~Timeout+1│')
+    assert gw.inline_confirm.scope == 'item'
+    assert gw.inline_confirm.item_key == chosen
+
+
+def test_tag_answer_renames_the_backup_and_refreshes_the_list(tmp_path):
+    chosen = tmp_path / '20261025-083036-s559DCA.RESYNC.bak'
+    chosen.write_text('state')
+    gw = make_tag_gw()
+    gw.request_backup_tag(chosen, seed='RESYNC')
+
+    type_and_enter(gw, '-my tag', clear=len('RESYNC'))
+
+    assert gw.inline_confirm.is_active is False
+    assert not chosen.exists()
+    assert (tmp_path / '20261025-083036-s559DCA.-my-tag.bak').exists()
+    assert gw.refreshed == [True]
+
+
+def test_tag_caret_edits_the_seeded_tag_in_place(tmp_path):
+    """The seeded tag is real text: LEFT moves the caret into it."""
+    chosen = tmp_path / '20261025-083036-s559DCA.~Timeout+1.bak'
+    chosen.write_text('state')
+    gw = make_tag_gw()
+    gw.request_backup_tag(chosen, seed='~Timeout+1')
+
+    gw.handle_confirm_key(cs.KEY_LEFT)
+    gw.handle_confirm_key(cs.KEY_DC)
+    gw.handle_confirm_key(ord('2'))
+    gw.handle_confirm_key(10)
+
+    assert (tmp_path / '20261025-083036-s559DCA.~Timeout+2.bak').exists()
+
+
+def test_tag_escape_changes_nothing(tmp_path):
+    chosen = tmp_path / '20261025-083036-s559DCA.RESYNC.bak'
+    chosen.write_text('state')
+    gw = make_tag_gw()
+    gw.request_backup_tag(chosen, seed='RESYNC')
+
+    gw.handle_confirm_key(27)
+
+    assert gw.inline_confirm.is_active is False
+    assert chosen.exists()
+    assert gw.refreshed == []
+
+
+def test_invalid_tag_is_asked_again_with_the_rejected_text_editable():
+    chosen = Path('20261025-083036-s559DCA.RESYNC.bak')
+    gw = make_tag_gw()
+    gw.request_backup_tag(chosen, seed='')
+
+    type_and_enter(gw, 'bad tag!')
+
+    assert gw.inline_confirm.is_active is True
+    assert (gw.inline_confirm.get_display_string()
+            == '⚠️ Invalid tag, then ENTER or ESC: bad-tag!│')
+    assert gw.refreshed == []
+
+
+def test_tag_accepts_the_characters_generated_tags_use(tmp_path):
     """Generated tags use '+' and '~', so a handwritten tag may too."""
-    gw = object.__new__(GrubWiz)
-    gw.win = FakeWin(['+Timeout+2'])
+    chosen = tmp_path / '20261025-083036-s559DCA.RESYNC.bak'
+    chosen.write_text('state')
+    gw = make_tag_gw()
+    gw.request_backup_tag(chosen, seed='RESYNC')
 
-    assert gw.request_backup_tag('Enter a tag') == '+Timeout+2'
+    type_and_enter(gw, '+Timeout~2', clear=len('RESYNC'))
+
+    assert (tmp_path / '20261025-083036-s559DCA.+Timeout~2.bak').exists()
+
+
+def test_reused_tag_is_refused_instead_of_overwriting_another_backup(tmp_path):
+    chosen = tmp_path / '20261025-083036-s559DCA.AAA.bak'
+    chosen.write_text('a')
+    taken = tmp_path / '20261025-083036-s559DCA.BBB.bak'
+    taken.write_text('b')
+    gw = make_tag_gw()
+
+    gw.apply_backup_tag(chosen, 'BBB')
+
+    assert chosen.exists()
+    assert taken.read_text() == 'b'
+    # Reported on the transient line rather than in a dialog: the backup list
+    # the tag was typed against stays on screen, which is what makes the
+    # collision understandable.
+    assert gw.win.flashes and 'already exists' in gw.win.flashes[0][0]
+    assert gw.refreshed == [True]
+
+
+def test_failed_rename_is_reported_without_a_dialog(tmp_path, monkeypatch):
+    chosen = tmp_path / '20261025-083036-s559DCA.AAA.bak'
+    chosen.write_text('a')
+    gw = make_tag_gw()
+
+    def refuse(_src, _dst):
+        raise OSError('read-only file system')
+
+    monkeypatch.setattr(main_module.os, 'rename', refuse)
+
+    gw.apply_backup_tag(chosen, 'CCC')
+
+    assert chosen.exists()
+    assert gw.win.flashes and 'read-only file system' in gw.win.flashes[0][0]
+    assert gw.refreshed == [True]
 
 
 class FakeBackupMgr:
@@ -228,6 +339,11 @@ class FakeBackupMgr:
         stem = name[:-4] if name.endswith('.bak') else name
         parts = stem.split('.')
         return parts[1] if len(parts) > 1 else ''
+
+    @staticmethod
+    def retagged_name(name, tag):
+        """Mimic BackupMgr: keep the stamp/checksum, replace the tag."""
+        return BackupMgr.retagged_name(name, tag)
 
     def get_backups(self):
         return dict(self.files)
@@ -290,13 +406,13 @@ def test_record_committed_backup_keeps_an_identical_state_as_resync():
     assert manager.created == [RESYNC_TAG]
 
 
-def test_review_write_passes_the_computed_tag():
+def test_review_write_passes_the_computed_tag_to_the_inline_prompt():
     """The tag is built on REVIEW, where the parameter diff exists."""
     screen = object.__new__(ReviewScreen)
     seen = {}
     screen.gw = SimpleNamespace(
         get_diffs=lambda: {'GRUB_DISABLE_SUBMENU': (GrubFile.ABSENT, 'true')},
-        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+        begin_commit_confirm=lambda tag=None: seen.setdefault('tag', tag))
     screen.app = screen.gw
 
     ReviewScreen.write_ACTION(screen)
@@ -310,7 +426,7 @@ def test_review_write_without_a_diff_passes_resync():
     seen = {}
     screen.gw = SimpleNamespace(
         get_diffs=lambda: {},
-        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+        begin_commit_confirm=lambda tag=None: seen.setdefault('tag', tag))
     screen.app = screen.gw
 
     ReviewScreen.write_ACTION(screen)
@@ -324,7 +440,7 @@ def test_review_write_between_two_sentinels_is_untagged():
     seen = {}
     screen.gw = SimpleNamespace(
         get_diffs=lambda: {'GRUB_TIMEOUT': (GrubFile.COMMENT, GrubFile.ABSENT)},
-        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+        begin_commit_confirm=lambda tag=None: seen.setdefault('tag', tag))
     screen.app = screen.gw
 
     ReviewScreen.write_ACTION(screen)
