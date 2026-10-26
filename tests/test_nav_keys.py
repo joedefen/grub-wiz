@@ -13,7 +13,9 @@ import curses
 import pytest
 
 import grub_wiz.main as cli
-from console_window import NAVIGATION_KEYS, OptionSpinner
+from console_window import (NAVIGATION_KEYS, ConsoleWindow, OptionSpinner,
+                            signals)
+from console_window.backend import HeadlessBackend
 from console_window.opts import ConsoleWindowOpts
 from console_window.window import render_nav_help
 
@@ -61,6 +63,24 @@ def test_spinner_accepts_taken_keys_but_still_rejects_navigation():
     with pytest.raises(ValueError, match='navigation key'):
         spinner.add_key('scroll_down', 'DOWN - one row', genre='action',
                         keys=[curses.KEY_DOWN])
+
+
+def test_ctrl_c_is_delivered_as_the_quit_key():
+    """Ctrl-C must reach the main loop as a key, never as a dead signal.
+
+    ``ConsoleWindowOpts(ctrl_c_terminates=False)`` makes the library turn
+    SIGINT into key 0x3, but only when the window was told the app handles it.
+    A window that forgot to register the key would swallow Ctrl-C silently, so
+    the quit prompt would be unreachable by Ctrl-C.
+    """
+    win = ConsoleWindow(ConsoleWindowOpts(ctrl_c_terminates=False),
+                        backend=HeadlessBackend(), singleton=False)
+    win.handled_keys = {cli.QUIT_KEY}
+    signals.ctrl_c_flag = True
+    try:
+        assert cli.prompt_key(win, 0.05) == cli.QUIT_KEY
+    finally:
+        signals.ctrl_c_flag = False
 
 
 def test_nav_help_credits_taken_keys_to_the_app():

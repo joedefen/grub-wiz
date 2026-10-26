@@ -28,7 +28,8 @@ def make_manager(tmp_path, user_config, target_content=CONTENT):
 
 
 def checksum(data=CONTENT):
-    return hashlib.sha256(data).hexdigest()[:8].upper()
+    """The six hex digits a current backup filename carries."""
+    return hashlib.sha256(data).hexdigest()[:6].upper()
 
 
 def test_calc_checksum_handles_missing_and_unreadable_paths(tmp_path):
@@ -39,7 +40,7 @@ def test_calc_checksum_handles_missing_and_unreadable_paths(tmp_path):
     assert manager.calc_checksum(missing) == ''
     # A directory exists but cannot be read as bytes.
     assert manager.calc_checksum(tmp_path) == ''
-    assert manager.calc_checksum('abc') == hashlib.sha256(b'abc').hexdigest()[:8].upper()
+    assert manager.calc_checksum('abc') == hashlib.sha256(b'abc').hexdigest()[:6].upper()
     with pytest.raises(TypeError):
         manager.calc_checksum(123)
 
@@ -189,13 +190,15 @@ def test_create_backup_missing_target_returns_none(tmp_path,
     assert manager.create_backup('orig') is None
 
 
-def test_create_backup_without_checksum_returns_none(tmp_path,
-                                                     isolated_user_config_dir,
-                                                     monkeypatch):
+def test_create_backup_without_a_tag_writes_an_untagged_name(tmp_path,
+                                                             isolated_user_config_dir):
     manager, _target = make_manager(tmp_path, isolated_user_config_dir)
-    monkeypatch.setattr(manager, 'calc_checksum', lambda _source: '')
 
-    assert manager.create_backup('orig') is None
+    path = manager.create_backup()
+
+    assert path is not None
+    assert path.name.endswith(f'-s{checksum()}.bak')
+    assert manager.tag_from_name(path.name) == ''
 
 
 def test_create_backup_read_failure_returns_none(tmp_path,
@@ -214,9 +217,9 @@ def test_get_backups_ignores_symlinks_and_other_non_files(tmp_path,
     manager = BackupMgr(target_path=tmp_path / 'grub',
                         user_config=isolated_user_config_dir)
     state = isolated_user_config_dir.user_state_dir
-    real = state / f'20260101-000000-{checksum()}.orig.bak'
+    real = state / f'20260101-000000-s{checksum()}.BASELINE.bak'
     real.write_bytes(CONTENT)
-    linked = state / f'20260102-000000-{checksum()}.linked.bak'
+    linked = state / f'20260102-000000-s{checksum()}.linked.bak'
     linked.symlink_to(real)
     (state / 'subdir').mkdir()
 

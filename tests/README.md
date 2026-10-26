@@ -15,6 +15,9 @@ tests/
 ├── test_grubwriter_commands.py       # Update/initramfs argv and failure paths
 ├── test_param_discovery_internals.py # info parsing, cache rules, discovery CLI
 ├── test_backup_restore.py            # Restore security guards and checksums
+├── test_backup_listing.py            # Backup inventory, naming and RESYNC collapse
+├── test_backup_purge.py              # Retention: trimming the inventory to 24
+├── test_backup_tag.py                # Automatic tag classification and abbreviation
 ├── test_distro_vars.py               # Startup path/binary resolution and gating
 ├── test_sync_check.py                # /etc/default/grub vs generated grub.cfg mtimes
 ├── test_canned_config_loading.py     # Custom-config loading and fallbacks
@@ -186,6 +189,29 @@ rejection, NUL and command-substitution refusal, explicit destinations, atomic
 success, and write failures. Also covers checksum edge cases and backup
 inventory filtering.
 
+### `test_backup_listing.py`
+
+Covers the inventory and the naming scheme: current and legacy filenames,
+optional tags, six-digit checksums, the refusal to overwrite a same-second
+file, identical content not being suppressed, the adjacent `RESYNC` collapse
+(including a cascade through a pre-existing chain), retagging without losing
+the checksum, and ordering by filename rather than modification time.
+
+### `test_backup_purge.py`
+
+Pins the retention rules: the 24-file limit, the oldest record never being
+removed, deleting oldest-first, sacrificing an adjacent same-content `RESYNC`
+before an older tagged record, *not* saving a record when the identical copy is
+not adjacent, stopping the moment the limit is reached, ignoring modification
+times, including legacy names, the single-line `Purge: N -> 24 backups.`
+summary, and treating an unreadable file as non-redundant.
+
+### `test_backup_tag.py`
+
+Covers `change_tag()`: active/inactive classification (un-commenting counts as
+an addition), the `+` > `-` > `~` priority, the `+N` count, and the
+word-count/dash table that abbreviates a parameter to at most 12 characters.
+
 ### `test_distro_vars.py`
 
 Drives startup resolution without inspecting the host: candidate order for
@@ -215,13 +241,19 @@ guidance wrapping, write failures, and the quote/continuation helpers.
 
 Covers the non-curses helpers: cell-width measurement and truncation, diffs,
 enum/regex selection, activation defaults, activate/deactivate state,
-backup-tag normalization, startup backup decisions, and quoted enum lookup.
+backup-tag normalization, the startup rule (BASELINE once, nothing on later
+launches), the tag handed over from REVIEW (`RESYNC` for an empty diff,
+untagged when no change could be classified), recording every commit, the
+quit confirmation for unapplied changes, Ctrl-C reaching that same check (it
+is the quit key, even when it arrives as `KeyboardInterrupt`), and quoted enum
+lookup.
 
 ### `test_cli_branches.py`
 
 Covers `--validate-custom-config`, `--factory-reset` (including partial
-failure), `--validator-demo`, and the `GrubCfgParser`/`DistroVars` module entry
-points.
+failure), `--validator-demo`, the pre-curses ordering of the purge and the
+`BASELINE` record, `-k`/`--keep-all-bak` suppressing only the purge, and the
+`GrubCfgParser`/`DistroVars` module entry points.
 
 ## Test Data Files
 

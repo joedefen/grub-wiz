@@ -150,3 +150,36 @@ def test_distro_vars_module_main_prints_detection(monkeypatch, capsys):
     dv_mod.main()
 
     assert 'etc_grub' in capsys.readouterr().out
+
+
+def _run_startup(monkeypatch, fake_wiz, *argv):
+    """Drive main() as far as the pre-curses work and return the call order."""
+    calls = []
+    fake_wiz.backup_mgr = SimpleNamespace(
+        purge_backups=lambda: calls.append('purge'))
+    fake_wiz.do_start_up_backup = lambda: calls.append('startup')
+    fake_wiz.main_loop = lambda: calls.append('loop')
+    fake_wiz.distro_vars = SimpleNamespace(
+        etc_grub=Path('/etc/default/grub'),
+        grub_cfg=Path('/boot/grub/grub.cfg'))
+    monkeypatch.setattr(cli, 'rerun_module_as_root', lambda _name: None)
+    monkeypatch.setattr(cli, 'GrubWiz', lambda cli_opts=None: fake_wiz)
+    monkeypatch.setattr(cli, 'run_sync_check', lambda *_a, **_kw: True)
+    monkeypatch.setattr(cli.time, 'sleep', lambda _seconds: None)
+    monkeypatch.setattr(sys, 'argv', ['grub-wiz', *argv])
+
+    cli.main()
+
+    return calls
+
+
+def test_startup_purges_before_the_first_backup(monkeypatch, fake_wiz):
+    """The purge and the BASELINE record run before curses, purge first."""
+    assert _run_startup(monkeypatch, fake_wiz) == ['purge', 'startup', 'loop']
+
+
+def test_keep_all_bak_skips_only_the_purge(monkeypatch, fake_wiz):
+    """-k keeps every backup; it must not suppress the one-time BASELINE."""
+    assert _run_startup(monkeypatch, fake_wiz, '--keep-all-bak') == [
+        'startup', 'loop']
+    assert _run_startup(monkeypatch, fake_wiz, '-k') == ['startup', 'loop']

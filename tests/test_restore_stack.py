@@ -99,11 +99,11 @@ def make_restore_screen(restore_ok):
         backup_mgr=SimpleNamespace(
             target_path=Path('/etc/default/grub'),
             restore_backup=lambda _path: restore_ok,
+            calc_checksum=lambda _path: 'DEADBEEF',
         ),
         navigate_back=lambda: False,
         reinit_gw=lambda: calls.append('reinit'),
         reset_screen_stack=lambda: calls.append('reset'),
-        do_start_up_backup=lambda: calls.append('startup'),
     )
     screen = RestoreScreen.__new__(RestoreScreen)
     screen.gw = gw
@@ -140,12 +140,17 @@ def test_failed_restore_reports_the_reason_from_backup_mgr():
 
 
 def test_successful_restore_rebuilds_with_fresh_stack():
-    """A successful restore reinitializes and rebinds the stack exactly once."""
+    """A successful restore reinitializes and rebinds the stack exactly once.
+
+    No backup is written: the bytes came from a file that is still on disk, so
+    the only state that moves is the checksum marking the current file.
+    """
     screen, win, calls = make_restore_screen(restore_ok=True)
 
     screen.restore_ACTION()
 
-    assert calls == ['reinit', 'reset', 'startup']
+    assert calls == ['reinit', 'reset']
+    assert screen.gw.grub_checksum == 'DEADBEEF'
 
 
 def test_successful_restore_notifies_without_an_alert():
@@ -183,11 +188,11 @@ def test_restore_uses_the_selected_path_not_checksum_lookup():
         backup_mgr=SimpleNamespace(
             target_path=Path('/etc/default/grub'),
             restore_backup=lambda path: restored.append(path) or True,
+            calc_checksum=lambda _path: 'DEADBEEF',
         ),
         navigate_back=lambda: False,
         reinit_gw=lambda: None,
         reset_screen_stack=lambda: None,
-        do_start_up_backup=lambda: None,
     )
     screen = RestoreScreen.__new__(RestoreScreen)
     screen.gw = gw

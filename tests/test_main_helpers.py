@@ -11,11 +11,16 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from grub_wiz.BackupMgr import RESYNC_TAG
 from grub_wiz.GrubFile import GrubFile
 from grub_wiz.main import (
+    QUIT_KEY,
+    RESTORE_ST,
     GrubWiz,
+    ReviewScreen,
     Tab,
     display_width,
+    prompt_key,
     truncate_to_width,
 )
 
@@ -184,7 +189,7 @@ def test_request_backup_tag_normalizes_and_reprompts():
     assert gw.request_backup_tag('Enter a tag') == 'good-tag'
 
     assert gw.win.calls[0]['prompt'].startswith('Enter a tag')
-    assert gw.win.calls[0]['seed'] == 'custom'
+    assert gw.win.calls[0]['seed'] == ''
     assert gw.win.calls[1]['prompt'].startswith('Invalid tag;')
     assert gw.win.calls[1]['seed'] == 'bad-tag!'
 
@@ -196,7 +201,17 @@ def test_request_backup_tag_cancel_returns_none():
     assert gw.request_backup_tag('Enter a tag') is None
 
 
+def test_request_backup_tag_accepts_generated_characters():
+    """Generated tags use '+' and '~', so a handwritten tag may too."""
+    gw = object.__new__(GrubWiz)
+    gw.win = FakeWin(['+Timeout+2'])
+
+    assert gw.request_backup_tag('Enter a tag') == '+Timeout+2'
+
+
 class FakeBackupMgr:
+    """Record what the startup and commit rules ask for, without a disk."""
+
     def __init__(self, files=None, checksum='NEW'):
         self.target_path = Path('/etc/default/grub')
         self.files = dict(files or {})
@@ -207,62 +222,188 @@ class FakeBackupMgr:
         return self.checksum
 
     def checksum_from_name(self, name):
+        return self.checksum
+
+    def tag_from_name(self, name):
         stem = name[:-4] if name.endswith('.bak') else name
         parts = stem.split('.')
-        if len(parts) < 2:
-            return ''
-        return parts[-2].split('-')[-1]
+        return parts[1] if len(parts) > 1 else ''
 
     def get_backups(self):
         return dict(self.files)
 
-    def create_backup(self, tag):
-        name = f'20260101-000000-{self.checksum}.{tag}.bak'
+    def create_backup(self, tag=None):
+        suffix = f'.{tag}' if tag else ''
+        name = f'20260101-000000-s{self.checksum}{suffix}.bak'
         self.files[name] = Path(name)
         self.created.append(tag)
         return Path(name)
 
 
-def make_backup_gw(manager, tag_answers=None):
+def make_backup_gw(manager):
     gw = object.__new__(GrubWiz)
     gw.backup_mgr = manager
     gw.grub_checksum = None
     gw.refresh_backup_list = lambda: setattr(gw, 'backups',
                                              gw.backup_mgr.get_backups())
-    gw.request_backup_tag = lambda _prompt: (
-        tag_answers.pop(0) if tag_answers else None)
     return gw
 
 
-def test_startup_backup_creates_orig_when_no_backups_exist():
+def test_startup_backup_is_baseline_when_no_backups_exist():
     manager = FakeBackupMgr()
     gw = make_backup_gw(manager)
 
     gw.do_start_up_backup()
 
-    assert manager.created == ['orig']
+    assert manager.created == ['BASELINE']
     assert gw.grub_checksum == 'NEW'
     assert len(gw.backups) == 1
 
 
-def test_startup_backup_requests_tag_for_new_checksum():
-    manager = FakeBackupMgr({'old-OLD.orig.bak': Path('old')})
-    gw = make_backup_gw(manager, ['pre-upgrade'])
-
-    gw.do_start_up_backup()
-
-    assert manager.created == ['pre-upgrade']
-    assert gw.grub_checksum == 'NEW'
-
-
-def test_startup_backup_skips_prompt_for_known_checksum():
-    manager = FakeBackupMgr({'old-NEW.orig.bak': Path('old')})
-    gw = make_backup_gw(manager, ['should-not-be-used'])
+def test_startup_backup_records_nothing_when_the_inventory_is_not_empty():
+    """A launch is not an event: only grub-wiz commits write a backup."""
+    manager = FakeBackupMgr({'20260101-000000-sOLD.RESYNC.bak': Path('old')})
+    gw = make_backup_gw(manager)
 
     gw.do_start_up_backup()
 
     assert manager.created == []
     assert gw.grub_checksum == 'NEW'
+
+
+def test_record_committed_backup_records_a_new_state():
+    manager = FakeBackupMgr({'20260101-000000-sOLD.~Timeout.bak': Path('old')})
+    gw = make_backup_gw(manager)
+
+    gw.record_committed_backup('~Timeout')
+
+    assert manager.created == ['~Timeout']
+
+
+def test_record_committed_backup_keeps_an_identical_state_as_resync():
+    """BackupMgr collapses the neighbour, so RESYNC must stay recordable."""
+    manager = FakeBackupMgr({'20260101-000000-sNEW.~Timeout.bak': Path('old')})
+    gw = make_backup_gw(manager)
+
+    gw.record_committed_backup(RESYNC_TAG)
+
+    assert manager.created == [RESYNC_TAG]
+
+
+def test_review_write_passes_the_computed_tag():
+    """The tag is built on REVIEW, where the parameter diff exists."""
+    screen = object.__new__(ReviewScreen)
+    seen = {}
+    screen.gw = SimpleNamespace(
+        get_diffs=lambda: {'GRUB_DISABLE_SUBMENU': (GrubFile.ABSENT, 'true')},
+        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+    screen.app = screen.gw
+
+    ReviewScreen.write_ACTION(screen)
+
+    assert seen['tag'] == '+DisablSubmen'
+
+
+def test_review_write_without_a_diff_passes_resync():
+    """Pressing w twice still updates GRUB; that is a RESYNC, not a no-op."""
+    screen = object.__new__(ReviewScreen)
+    seen = {}
+    screen.gw = SimpleNamespace(
+        get_diffs=lambda: {},
+        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+    screen.app = screen.gw
+
+    ReviewScreen.write_ACTION(screen)
+
+    assert seen['tag'] == RESYNC_TAG
+
+
+def test_review_write_between_two_sentinels_is_untagged():
+    """COMMENT -> ABSENT is a real edit with no value change, not a RESYNC."""
+    screen = object.__new__(ReviewScreen)
+    seen = {}
+    screen.gw = SimpleNamespace(
+        get_diffs=lambda: {'GRUB_TIMEOUT': (GrubFile.COMMENT, GrubFile.ABSENT)},
+        update_grub=lambda tag=None: seen.setdefault('tag', tag))
+    screen.app = screen.gw
+
+    ReviewScreen.write_ACTION(screen)
+
+    assert seen['tag'] is None
+
+
+def test_confirm_quit_is_silent_without_pending_changes():
+    asked = []
+    gw = object.__new__(GrubWiz)
+    gw.get_diffs = lambda: {}
+    gw.really_wanna = lambda act: asked.append(act) or True
+
+    assert gw.confirm_quit() is True
+    assert asked == []
+
+
+def test_confirm_quit_asks_before_discarding_changes():
+    asked = []
+    gw = object.__new__(GrubWiz)
+    gw.get_diffs = lambda: {'GRUB_TIMEOUT': ('5', '9'),
+                            'GRUB_THEME': ('a', 'b')}
+    gw.really_wanna = lambda act: asked.append(act) or False
+
+    assert gw.confirm_quit() is False
+    assert asked == ['quit and discard 2 unapplied change(s)']
+
+
+class FakeLoopWin:
+    """Just enough window for ``prompt_key()``: a key, or a Ctrl-C."""
+
+    def __init__(self, result=None, interrupt=False):
+        self.result = result
+        self.interrupt = interrupt
+        self.timeouts = []
+
+    def prompt(self, seconds=0.0):
+        self.timeouts.append(seconds)
+        if self.interrupt:
+            raise KeyboardInterrupt
+        return self.result
+
+
+def test_quit_key_is_ctrl_c():
+    assert QUIT_KEY == 0x3
+
+
+def test_prompt_key_returns_the_typed_key():
+    win = FakeLoopWin(ord('q'))
+
+    assert prompt_key(win, 0.1) == ord('q')
+    assert win.timeouts == [0.1]
+
+
+def test_prompt_key_turns_ctrl_c_into_the_quit_key():
+    """Ctrl-C must reach the loop as a key, never as an escaping exception."""
+    assert prompt_key(FakeLoopWin(interrupt=True), 0.1) == QUIT_KEY
+
+
+def test_request_quit_from_restore_goes_back_instead_of_asking():
+    gw = object.__new__(GrubWiz)
+    gw.ss = SimpleNamespace(is_curr=lambda num: num == RESTORE_ST)
+    calls = []
+    gw.navigate_back = lambda: calls.append('back') or True
+    gw.confirm_quit = lambda: calls.append('asked') or True
+
+    assert gw.request_quit() is False
+    assert calls == ['back']
+
+
+def test_request_quit_elsewhere_asks_before_stopping():
+    gw = object.__new__(GrubWiz)
+    gw.ss = SimpleNamespace(is_curr=lambda _num: False)
+    calls = []
+    gw.navigate_back = lambda: calls.append('back')
+    gw.confirm_quit = lambda: calls.append('asked') or True
+
+    assert gw.request_quit() is True
+    assert calls == ['asked']
 
 
 # --- enum lookup -----------------------------------------------------------

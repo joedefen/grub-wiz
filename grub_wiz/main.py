@@ -23,12 +23,15 @@ import curses as cs
 from argparse import ArgumentParser
 from pathlib import Path
 from types import SimpleNamespace
-from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
+from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
+                            Screen, ScreenStack, Context, IncrementalSearchBar,
+                            InlineConfirmation)
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
 from .GrubCfgParser import entries_to_enums, get_top_level_grub_entries
-from .BackupMgr import BackupMgr
+from .BackupMgr import BackupMgr, BASELINE_TAG, RESYNC_TAG
+from .BackupTag import change_tag
 from .WarnDB import WarnDB
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
@@ -49,6 +52,11 @@ TAKEN_NAV_KEYS = {
     cs.KEY_LEFT: 'prev value',
     cs.KEY_RIGHT: 'next value',
 }
+
+# The ETX key code, i.e. what Ctrl-C becomes once console-window delivers it as
+# a key instead of letting SIGINT kill the process.  ``q`` and Ctrl-C are the
+# same quit request, so both get the "discard unapplied changes?" check.
+QUIT_KEY = 0x3
 
 
 class Tab:
@@ -109,6 +117,89 @@ def truncate_to_width(text, width, ellipsis='▶'):
         kept.append(char)
         used += char_width
     return ''.join(kept) + ellipsis
+
+
+class InlineSearchPrompt:
+    """A search prompt drawn and edited in place, with a movable caret.
+
+    ``IncrementalSearchBar`` only ever seeds its caret at the end of the
+    existing pattern.  This adapter backs the WARNINGS-CONFIG ``/`` prompt with
+    console-window's ``InlineConfirmation`` line editor, which owns the buffer
+    and the caret and handles LEFT/RIGHT, Home/End, Backspace and Delete.  The
+    public surface stays the same as ``IncrementalSearchBar`` so the main loop
+    and screen code do not need to know which editor is in use.
+
+    Accepting still delivers the pattern to ``on_accept`` even when the buffer
+    is empty (an empty pattern clears the filter); ``InlineConfirmation`` would
+    otherwise treat that as "keep editing".
+    """
+
+    def __init__(self, on_change=None, on_accept=None, on_cancel=None):
+        self._editor = InlineConfirmation()
+        self._text = ''
+        self._start_text = ''
+        self._notified = ''
+        self.on_change = on_change
+        self.on_accept = on_accept
+        self.on_cancel = on_cancel
+
+    def start(self, initial_text: str = '') -> None:
+        self._text = initial_text
+        self._start_text = initial_text
+        self._notified = initial_text
+        self._editor.start(mode='text', initial=initial_text)
+
+    def handle_key(self, key: int) -> bool:
+        if not self.is_active:
+            return False
+        if key in (10, 13):  # ENTER accepts even when nothing was typed
+            self._accept()
+            return True
+        if key == 27:  # ESC restores the pattern that was active on entry
+            self._cancel()
+            return True
+
+        # Every other key belongs to the line editor while the prompt is live.
+        self._editor.handle_key(key)
+        self._text = self._editor.input_buffer
+        if self._text != self._notified:
+            self._notified = self._text
+            if self.on_change:
+                self.on_change(self._text)
+        return True
+
+    def _accept(self) -> None:
+        text = self._editor.input_buffer
+        self._editor.cancel()
+        self._text = text
+        if self.on_accept:
+            self.on_accept(text)
+
+    def _cancel(self) -> None:
+        self._editor.cancel()
+        self._text = self._start_text
+        if self.on_cancel:
+            self.on_cancel(self._start_text)
+
+    def get_display_string(self, prefix: str = '/', cursor_char: str = '█') -> str:
+        if self.is_active:
+            return self._editor.get_display_string(f'{prefix} ',
+                                                   cursor_char=cursor_char)
+        if self._text:
+            return f'{prefix}{self._text}'
+        return ''
+
+    @property
+    def is_active(self) -> bool:
+        return self._editor.active
+
+    @property
+    def text(self) -> str:
+        return self._editor.input_buffer if self.is_active else self._text
+
+    @property
+    def cursor_pos(self) -> int:
+        return self._editor.cursor_pos
 
 
 # Note: Clue class has been replaced with Context from ConsoleWindow
@@ -692,10 +783,22 @@ class ReviewScreen(HomeScreen):
         self.gw.show_hidden_warns = not self.gw.show_hidden_warns
 
     def write_ACTION(self):
-        """Handle 'w' key on REVIEW screen - update grub"""
+        """Handle 'w' key on REVIEW screen - update grub.
+
+        The automatic backup tag is built here because this is the only place
+        the parameter-level diff is known: update_grub() re-reads the file
+        afterwards, which discards every pending value.
+
+        Writing with nothing to report still runs update-grub, and that is
+        worth a record: it is tagged RESYNC.  The test is the diff being
+        empty, not change_tag() returning nothing -- a parameter moving
+        between two inactive sentinels is a real edit with no value change.
+        """
         # Note: update_grub is now a critical requirement, so is_crippled only indicates
         # missing grub_cfg (which affects menu entry enumeration, not update capability)
-        self.gw.update_grub()
+        diffs = self.gw.get_diffs()
+        tag = RESYNC_TAG if not diffs else change_tag(diffs)
+        self.gw.update_grub(tag=tag or None)
 
     def slash_ACTION(self):
         """Search is not available on REVIEW; '/' is a no-op."""
@@ -710,8 +813,8 @@ class RestoreScreen(GrubWizScreen):
     def __init__(self, grub_wiz):
         """Constructor handles initial backup list setup"""
         super().__init__(grub_wiz)
-        # Initialize backup list
-        self.gw.do_start_up_backup()
+        # Inventory only.  The startup snapshot is taken once in main_loop();
+        # taking it again here would add a RESYNC before the user did anything.
         self.gw.refresh_backup_list()
         self.bak_paths = []
         self.baseline_bak = None  # what to compare to
@@ -758,7 +861,8 @@ class RestoreScreen(GrubWizScreen):
         self.bak_paths = []
         for pair in gw.ordered_backup_pairs:
             checksum, bak_path = pair[0], pair[1]
-            prefix = '●' if checksum == gw.grub_checksum else ' '
+            is_current = gw.backup_mgr.checksum_matches(checksum, gw.grub_checksum)
+            prefix = '●' if is_current else ' '
             ref = 'CMP' if self.baseline_bak == bak_path else '   '
             self.bak_paths.append(bak_path)
             self.win.add_body(f'{prefix} {ref} {bak_path.name}',
@@ -828,7 +932,10 @@ class RestoreScreen(GrubWizScreen):
             pass
         gw.reinit_gw()
         gw.reset_screen_stack()
-        gw.do_start_up_backup()
+        # The restored bytes came from a backup that is still on disk, so
+        # there is no new state to record; only the marker that says which
+        # file is "current" has to move.
+        gw.grub_checksum = gw.backup_mgr.calc_checksum(gw.backup_mgr.target_path)
 
     def delete_ACTION(self):
         """Handle 'd' key on RESTORE screen - delete selected backup"""
@@ -850,10 +957,11 @@ class RestoreScreen(GrubWizScreen):
         idx = self.win.pick_pos
         if 0 <= idx < len(gw.ordered_backup_pairs):
             chosen = gw.ordered_backup_pairs[idx][1]
+            current = gw.backup_mgr.tag_from_name(chosen.name)
             tag = gw.request_backup_tag(f'Enter tag for {chosen.name}',
-                                              seed='')
+                                              seed=current)
             if tag:
-                new_name = re.sub(r'[^.]+\.bak$', f'{tag}.bak', chosen.name)
+                new_name = gw.backup_mgr.retagged_name(chosen.name, tag)
                 new_path = chosen.parent / new_name
                 # os.rename() silently replaces an existing destination on
                 # POSIX, which would destroy another backup when a tag is
@@ -1138,7 +1246,7 @@ class WarnScreen(GrubWizScreen):
                 gw.warn_db.write_if_dirty()
 
     def slash_ACTION(self):
-        """Start incremental search mode"""
+        """Start the inline search prompt with a movable caret."""
         self.gw.search_bar.start(self.search)
         self.gw.win.passthrough_mode = True
 
@@ -1286,6 +1394,21 @@ def prompt_line(prompt: str, default: str = '') -> str:
         return input(prompt)
     except EOFError:
         return default
+
+
+def prompt_key(win, seconds: float):
+    """Return one key, turning Ctrl-C into the quit key.
+
+    console-window delivers Ctrl-C as key ``0x3`` while its window owns SIGINT,
+    but the same keystroke still arrives as ``KeyboardInterrupt`` whenever
+    curses is not running (or a signal lands mid-render).  A Ctrl-C must never
+    escape the main loop as an exception -- it is the same quit request as
+    ``q``, so it has to reach the same "discard unapplied changes?" check.
+    """
+    try:
+        return win.prompt(seconds=seconds)
+    except KeyboardInterrupt:
+        return QUIT_KEY
 
 
 class GrubWiz:
@@ -1526,7 +1649,8 @@ class GrubWiz:
         # Register all keys (with stack available, actions will be properly scoped)
         spinner.add_key('escape', 'ESC - back to prev screen', genre="action", keys=[27,])
         spinner.add_key('help_mode', '? - enter help screen', genre='action')
-        spinner.add_key('quit', 'q,ctl-c - quit the app', genre='action', keys={0x3, ord('q')})
+        spinner.add_key('quit', 'q,ctl-c - quit the app', genre='action',
+                        keys={QUIT_KEY, ord('q')})
 
         spinner.add_key('cycle_next', '=>,SP - next cycle value',
                         genre='action', keys=[cs.KEY_RIGHT, ord(' ')])
@@ -1559,10 +1683,10 @@ class GrubWiz:
         spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', genre='action')
 
         # Add ENTER to handled keys so it passes through during search (no visible menu item)
-        # This is needed for IncrementalSearchBar to receive ENTER key in passthrough mode
+        # This is needed for the inline search prompt to receive ENTER in passthrough mode
         spinner.add_key('_search_enter', '', keys=[10, 13])
 
-        # Create incremental search bar for WarnScreen filtering
+        # Create the inline search prompt for WarnScreen filtering
         def on_search_change(text):
             # Compile the search regex incrementally as user types
             warn_screen = self.screens.get(WARN_ST)
@@ -1597,7 +1721,7 @@ class GrubWiz:
                     warn_screen.regex = None
             self.win.passthrough_mode = False
 
-        self.search_bar = IncrementalSearchBar(
+        self.search_bar = InlineSearchPrompt(
             on_change=on_search_change,
             on_accept=on_search_accept,
             on_cancel=on_search_cancel
@@ -1946,19 +2070,26 @@ class GrubWiz:
         ``get_backups()`` is keyed by filename, so every file on disk gets a
         row even when another file has identical content.  The checksum is
         carried alongside each path only to mark the current configuration.
+        Ordering uses the manager's sort key: two records can share a
+        timestamp, so the name alone is not age.
         """
         self.backups = self.backup_mgr.get_backups()
         self.ordered_backup_pairs = sorted(
             ((self.backup_mgr.checksum_from_name(name), path)
              for name, path in self.backups.items()),
-            key=lambda item: item[1],
+            key=lambda item: self.backup_mgr.sort_key(item[1]),
             reverse=True,
         )
 
-    def request_backup_tag(self, prompt, seed='custom'):
+    def request_backup_tag(self, prompt, seed=''):
         """ Prompt user for a valid tag ... turn spaces into '-'
-         automatically """
-        regex = r'^[-_A-Za-z0-9]+$'
+         automatically
+
+        Generated tags use '+', '-' and '~', so a handwritten tag may use them
+         too; spaces are still rejected.  This prompt is only reachable from
+         the RESTORE screen's retag action: a backup is never named by asking.
+        """
+        regex = r'^[-_+~A-Za-z0-9]+$'
         hint = f'regex={regex}'
         prompt_text = prompt
         while True:
@@ -1976,27 +2107,38 @@ class GrubWiz:
             seed = answer
 
     def do_start_up_backup(self):
-        """ On startup
-            - install the "orig" backup of none
-            - offer to install any uniq backup
+        """Record the first state ever seen, and nothing else.
+
+        Launching grub-wiz is not itself an event worth a snapshot: a backup
+        is written when grub-wiz *changes* grub.  The one exception is the
+        very first run, which must leave something to restore to; that record
+        is tagged BASELINE.
+
+        So an edit made outside grub-wiz, or a package update, is not backed
+        up by the next launch.  A backup's timestamp is the moment of a
+        grub-wiz commit, not of every change to /etc/default/grub.  A precise
+        ``{type}{param}[+{cnt}]`` tag also needs the parameter diff, which only
+        exists at commit time; see record_committed_backup().
         """
         self.refresh_backup_list()
-        target = self.backup_mgr.target_path
-        checksum = self.backup_mgr.calc_checksum(target)
-        known_checksums = {
-            self.backup_mgr.checksum_from_name(name) for name in self.backups
-        }
         if not self.backups:
-            self.backup_mgr.create_backup('orig')
+            self.backup_mgr.create_backup(BASELINE_TAG)
             self.refresh_backup_list()
+        self.grub_checksum = self.backup_mgr.calc_checksum(
+            self.backup_mgr.target_path) # checksum of loaded grub
 
-        elif checksum not in known_checksums:
-            answer = self.request_backup_tag(f'Enter a tag to back up {target}')
-            if answer:
-                self.backup_mgr.create_backup(answer)
-                self.refresh_backup_list()
+    def record_committed_backup(self, tag):
+        """Snapshot the just-written configuration.
 
-        self.grub_checksum = checksum # checksum of loaded grub
+        Called after a successful commit, while curses is stopped so the
+        printed result is visible.  *tag* is ``RESYNC`` when REVIEW had nothing
+        to report, otherwise the computed ``{type}{param}[+{cnt}]`` tag.
+
+        An identical content is deliberately not skipped: BackupMgr removes
+        the adjacent same-content ``RESYNC`` instead, which keeps exactly one
+        record of the state and moves its timestamp to the latest update.
+        """
+        return self.backup_mgr.create_backup(tag)
 
     def really_wanna(self, act):
         """ Ask for explicit confirmation before a destructive action.
@@ -2017,8 +2159,40 @@ class GrubWiz:
             return False
         return answer.strip().lower() == 'yes'
 
-    def update_grub(self):
-        """Commit staged changes, update GRUB, and offer reboot/poweroff."""
+    def confirm_quit(self):
+        """True when the user may leave without losing unapplied changes.
+
+        Edits live only in memory (``param_values`` versus ``prev_values``), so
+         quitting silently discards them.  ``undo`` restores from
+         ``prev_values`` and a successful commit re-snapshots it, so
+         ``get_diffs()`` is exactly the "there is something to lose" test.
+         The confirmation starts empty, so Enter/Esc keeps the session.
+        """
+        pending = len(self.get_diffs())
+        if not pending:
+            return True
+        return self.really_wanna(
+            f'quit and discard {pending} unapplied change(s)')
+
+    def request_quit(self):
+        """Handle a quit request (``q`` or Ctrl-C); True when the app stops.
+
+        On RESTORE the first quit request is a way back to the edit screens, so
+        nothing is asked and nothing is lost.  Everywhere else the request goes
+        through ``confirm_quit()``, which only prompts when the in-memory edits
+        differ from the last committed state.
+        """
+        if self.ss.is_curr(RESTORE_ST):
+            self.navigate_back()
+            return False
+        return self.confirm_quit()
+
+    def update_grub(self, tag=None):
+        """Commit staged changes, update GRUB, and offer reboot/poweroff.
+
+        *tag* is the automatic backup tag built by the REVIEW screen from the
+         pending diff, or None when nothing could classify the change.
+        """
         if not self.really_wanna('commit changes and update GRUB'):
             return
 
@@ -2055,6 +2229,11 @@ class GrubWiz:
             ok, commit_msg = self.grub_writer.commit_and_update(candidate_path)
             if not ok:
                 print(commit_msg)
+            else:
+                # Record the applied state now: curses is still stopped, so
+                # the result is visible, and the menu below can end the
+                # process with reboot/poweroff before anything else runs.
+                self.record_committed_backup(tag)
 
         # Check if initramfs rebuild is needed
         if ok and self.distro_vars.update_initramfs:
@@ -2135,7 +2314,12 @@ class GrubWiz:
             if ok:
                 self.reinit_gw()
                 self.reset_screen_stack()
-                self.do_start_up_backup()
+                # The commit already recorded this state; asking the startup
+                # rule again would only add a RESYNC for it.  Refresh the
+                # checksum the RESTORE screen marks as "current" instead.
+                self.grub_checksum = self.backup_mgr.calc_checksum(
+                    self.backup_mgr.target_path)
+                self.refresh_backup_list()
 
     def find_in(self, value, enums=None, cfg=None):
         """ Find the value in the list of choices using only
@@ -2217,9 +2401,12 @@ class GrubWiz:
         return False
 
     def main_loop(self):
-        """Run the draw/prompt/dispatch loop until the user quits."""
+        """Run the draw/prompt/dispatch loop until the user quits.
+
+        The start-up backup and the purge of old backups happen in main()
+        before curses starts, so their output is visible on the terminal.
+        """
         self.setup_win()
-        self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
         self.next_prompt_seconds = [0.1, 0.1]
 
@@ -2229,7 +2416,7 @@ class GrubWiz:
             self.screens[screen_num].draw_screen()
 
             win.render()
-            key = win.prompt(seconds=self.next_prompt_seconds[0])
+            key = prompt_key(win, self.next_prompt_seconds[0])
 
             self.next_prompt_seconds.pop(0)
             if not self.next_prompt_seconds:
@@ -2240,6 +2427,16 @@ class GrubWiz:
                 pass
 
             if key is not None:
+                # Ctrl-C is the quit key too.  Handle it before the search bars
+                # and passthrough mode can swallow it, and give it the same
+                # unapplied-changes check as 'q' (spinner.do_key never sees it).
+                if key == QUIT_KEY:
+                    spins.quit = False
+                    if self.request_quit():
+                        break
+                    win.clear()
+                    continue
+
                 # Check if any search bar is active and should handle the key
                 if self.search_bar.is_active:
                     if self.search_bar.handle_key(key):
@@ -2254,12 +2451,10 @@ class GrubWiz:
 
                 self.spinner.do_key(key, win)
 
-                # Handle app-level quit action
+                # Handle app-level quit action ('q')
                 if spins.quit:
                     spins.quit = False
-                    if self.ss.is_curr(RESTORE_ST):
-                        self.navigate_back()
-                    else:
+                    if self.request_quit():
                         break
 
                 # Use perform_actions() to automatically handle all screen-specific actions
@@ -2293,6 +2488,8 @@ def main():
                         help='for test only: run validator demo')
     parser.add_argument('--answer-timeout-debug', action='store_true',
                         help='for test only: enables screen redraw indicator')
+    parser.add_argument('-k', '--keep-all-bak', action='store_true',
+                        help='keep every backup; skip the start-up purge')
     opts = parser.parse_args()
 
     wiz = GrubWiz(cli_opts=opts)
@@ -2345,6 +2542,13 @@ def main():
     if not run_sync_check(wiz.distro_vars.etc_grub, wiz.distro_vars.grub_cfg):
         print('Aborting.')
         sys.exit(0)
+
+    # Trim old backups and record the very first state before curses takes the
+    # terminal over, so both results are readable on the normal screen.  -k
+    # only suppresses the purge; the one-time BASELINE record is not a purge.
+    if not opts.keep_all_bak:
+        wiz.backup_mgr.purge_backups()
+    wiz.do_start_up_backup()
 
     time.sleep(1.0)
     wiz.main_loop()
