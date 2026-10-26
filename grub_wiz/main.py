@@ -114,7 +114,12 @@ def truncate_to_width(text, width, ellipsis='▶'):
 # Context usage patterns:
 #   Context(genre='DECOR') - non-pickable decorative lines (headers, separators)
 #   Context(genre='param', param_name=...) - pickable parameter lines
-#   Context(genre='TRANSIENT') - dropdown/conditional content (auto-visible with parent)
+#   Context(genre='TRANSIENT', pickable=False) - dropdown/guidance and other
+#       content owned by the picked row.  Such rows abut to their parent (so
+#       they stay visible with it) but must never be selection stops: the body
+#       is redrawn with the dropdown only under the selected parameter, so
+#       letting the pick land on one silently collapsed the dropdown and made
+#       DOWN need a second press to reach the next parameter.
 #   Context(genre='warn', warn_key=...) - pickable warning lines
 
 
@@ -174,6 +179,54 @@ class GrubWizScreen(Screen):
         if self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
             self.gw.navigate_to(WARN_ST)
 
+    # Body rows are not stable across redraws: the dropdown/detail rows are
+    # emitted only under the selected parameter.  The window's ``pick_pos`` is
+    # an index into the *previous* frame, so after a move it cannot be used
+    # directly to decide which parameter is selected.  Instead each draw
+    # records an anchor from every pickable row to a stable row identity
+    # (parameter name / warning key).  The next draw maps the old index back to
+    # that identity, renders the block selected, and moves ``pick_pos`` to the
+    # anchor's new row.
+    def previous_pick_anchors(self):
+        """Return {body_row: stable_identity} from the previous draw."""
+        return getattr(self, '_pick_anchors', None) or {}
+
+    def apply_pick_anchors(self, anchors, target_key):
+        """Store this frame's anchors and re-point the pick at *target_key*."""
+        self._pick_anchors = anchors
+        if target_key is not None:
+            for row, key in anchors.items():
+                if key == target_key:
+                    self.win.pick_pos = row
+                    return
+        self._clamp_pick_to_pickable()
+
+    def _clamp_pick_to_pickable(self):
+        """Fallback: keep pick_pos in range and on a pickable body row."""
+        win = self.win
+        if not win.body.row_cnt:
+            win.pick_pos = 0
+            return
+        contexts = getattr(win.body, 'contexts', [])
+        pos = min(max(win.pick_pos, 0), win.body.row_cnt - 1)
+
+        def pickable(row):
+            if row < 0 or row >= len(contexts):
+                return True
+            ctx = contexts[row]
+            return ctx is None or getattr(ctx, 'pickable', True)
+
+        if not pickable(pos):
+            for offset in range(1, win.body.row_cnt):
+                after, before = pos + offset, pos - offset
+                if after < win.body.row_cnt and pickable(after):
+                    pos = after
+                    break
+                if before >= 0 and pickable(before):
+                    pos = before
+                    break
+        win.pick_pos = pos
+
 
 class HomeScreen(GrubWizScreen):
     """HOME screen - parameter editing"""
@@ -229,6 +282,11 @@ class HomeScreen(GrubWizScreen):
         gw.hidden_stats = SimpleNamespace(param=0, warn=0)
         win = self.win # short hand
         picked = win.pick_pos
+        # ``picked`` indexes the *previous* frame.  Translate it to a stable
+        # identity before rebuilding, because the selected parameter's dropdown
+        # rows shift every row below it.
+        target_key = self.previous_pick_anchors().get(picked)
+        anchors = {}
         found_current = False
         first_visible_section = True
 
@@ -267,16 +325,25 @@ class HomeScreen(GrubWizScreen):
 
             # Add visible params
             for param_name in visible_params:
-                is_current = bool(picked == win.body.row_cnt)
-                param_lines = self.body_param_lines(param_name, is_current)
+                selected = bool(target_key is not None
+                                and target_key[0] == 'param'
+                                and target_key[1] == param_name)
+                if target_key is None and picked == win.body.row_cnt:
+                    # First frame: anchors do not exist yet, so use the old
+                    # positional rule once to establish them.
+                    selected = True
+                param_lines = self.body_param_lines(param_name, selected)
 
-                if not is_current:
+                if not selected:
                     line = param_lines[0]
                     if len(param_lines) > 1:
                         line = line[:win.cols-2] + '⯈'
+                    anchors[win.body.row_cnt] = ('param', param_name, 0)
                     win.add_body(line, context=Context(genre='param', param_name=param_name))
                     continue
 
+                if target_key is None:
+                    target_key = ('param', param_name, 0)
                 found_current = True
                 emits = param_lines + gw.drop_down_lines(param_name)
 
@@ -290,11 +357,17 @@ class HomeScreen(GrubWizScreen):
                     emits = [emits[0]] + self.left_side_box(emits[1:])
 
                 # Add parent param line
+                anchors[win.body.row_cnt] = ('param', param_name, 0)
                 win.add_body(emits[0], context=Context(genre='param', param_name=param_name))
-                # Add TRANSIENT dropdown lines (auto-visible with parent via ConsoleWindow)
+                # Add TRANSIENT dropdown lines (auto-visible with parent via
+                # ConsoleWindow) but never navigation stops: otherwise DOWN
+                # lands on a detail row, the redraw drops the dropdown, and a
+                # second DOWN is needed to reach the next parameter.
                 for emit in emits[1:]:
-                    win.add_body(emit, context=Context(genre='TRANSIENT'))
+                    win.add_body(emit, context=Context(genre='TRANSIENT',
+                                                       pickable=False))
 
+        self.apply_pick_anchors(anchors, target_key)
         return found_current
 
     def add_common_head1(self, title):
@@ -522,22 +595,34 @@ class ReviewScreen(HomeScreen):
                 item.heys += heys
 
         picked = self.win.pick_pos
+        # Translate the previous frame's row index into a stable identity; see
+        # HomeScreen.draw_body() for why the absolute index cannot be reused.
+        target_key = self.previous_pick_anchors().get(picked)
+        anchors = {}
 
         for param_name, ns in reviews.items():
             tab = self.get_tab()
-            is_current = bool(self.win.body.row_cnt == picked)
-            param_lines = self.body_param_lines(param_name, is_current)
+            selected = bool(target_key is not None
+                            and target_key[0] == 'param'
+                            and target_key[1] == param_name)
+            if target_key is None and self.win.body.row_cnt == picked:
+                selected = True
+            param_lines = self.body_param_lines(param_name, selected)
+            if target_key is None and selected:
+                target_key = ('param', param_name, 0)
 
             # Add param lines with Context
-            for line in param_lines:
+            for idx, line in enumerate(param_lines):
+                anchors[self.win.body.row_cnt] = ('param', param_name, idx)
                 self.win.add_body(line, context=Context(genre='param', param_name=param_name))
 
             changed = bool(ns.old_value is not None
                            and str(ns.value) != str(ns.old_value))
             if changed:
-                # TRANSIENT line showing old value
+                # TRANSIENT line showing old value (detail, not a pick target)
                 self.win.add_body(f'{"└──────── was":>{tab.lwid}}  {ns.old_value}',
-                                context=Context(genre='TRANSIENT'))
+                                context=Context(genre='TRANSIENT',
+                                                pickable=False))
 
             for hey in ns.heys:
                 warn_key = WarnDB.make_key(param_name, hey[1])
@@ -555,17 +640,27 @@ class ReviewScreen(HomeScreen):
                     pad = max(tab.lwid - display_width(sub_text), 0)
                     line = f'{" " * pad}{sub_text}  {hey[1]}'
                     # Add warning line with Context - TRANSIENT keeps it with parent
+                    warn_selected = bool(target_key is not None
+                                         and target_key[0] == 'warn'
+                                         and target_key[1] == warn_key)
+                    if target_key is None and self.win.body.row_cnt == picked:
+                        warn_selected = True
+                        target_key = ('warn', warn_key, 0)
+                    anchors[self.win.body.row_cnt] = ('warn', warn_key, 0)
                     gw.add_wrapped_body_line(line, tab.lwid+2,
-                                             self.win.body.row_cnt==picked,
+                                             warn_selected,
                                              context=Context(genre='warn', warn_key=warn_key))
 
-            if is_current:
+            if selected:
                 emits = gw.drop_down_lines(param_name)
                 if len(emits) > 1:
                     emits = self.left_side_box(emits)
-                # Add TRANSIENT dropdown lines
+                # Add TRANSIENT dropdown lines (detail, not pick targets)
                 for emit in emits:
-                    self.win.add_body(emit, context=Context(genre='TRANSIENT'))
+                    self.win.add_body(emit, context=Context(genre='TRANSIENT',
+                                                            pickable=False))
+
+        self.apply_pick_anchors(anchors, target_key)
 
     def hide_ACTION(self):
         """Handle 'x' key on REVIEW screen - toggle warning suppression"""
@@ -1585,11 +1680,13 @@ class GrubWiz:
                     subsequent_indent=' '*indent)
         wraps = wrapped.split('\n')
         for idx, wrap in enumerate(wraps):
-            # First line gets the context, rest get TRANSIENT
+            # First line gets the context; continuation rows inherit the
+            # parent's visibility but are detail, never pick targets.
             if idx == 0:
                 self.win.add_body(wrap, context=context)
             else:
-                self.win.add_body(wrap, context=Context(genre='TRANSIENT'))
+                self.win.add_body(wrap, context=Context(genre='TRANSIENT',
+                                                        pickable=False))
         return len(wraps) # lines added
 
     def is_warn_hidden(self, param_name, hey):
