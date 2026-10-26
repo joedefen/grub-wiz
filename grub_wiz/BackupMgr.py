@@ -49,6 +49,11 @@ class BackupMgr:
                             else UserConfigDir.get_singleton("grub-wiz"))
         self.config_dir = self.user_config.user_state_dir
 
+        # Reason the most recent restore_backup() refused or failed.  The TUI
+        # runs under curses, so a message printed to stderr is invisible to
+        # the user; the caller reads this attribute and shows it in an alert.
+        self.last_error: str = ''
+
     def calc_checksum(self, source: Union[Path, str]) -> str:
         """Return the first 8 hex digits of the SHA-256 of a file or string.
 
@@ -113,16 +118,39 @@ class BackupMgr:
                 return path
         return None
 
+    @staticmethod
+    def _command_substitution_line(data: bytes) -> Optional[int]:
+        """Return the 1-based line of live command substitution, or ``None``.
+
+        ``/etc/default/grub`` is sourced by the distro's shell scripts, so a
+        substitution in an *assignment* is root code execution.  Comments are
+        never executed, and stock distro files contain backticks inside their
+        commentary (Debian: "the command ``videoinfo'``"), so scanning the raw
+        bytes rejected perfectly valid restores.  Only lines that survive
+        comment removal can run.
+        """
+        text = data.decode('utf-8', errors='replace')
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            if '`' in stripped or '$(' in stripped:
+                return line_number
+        return None
+
     def restore_backup(self, backup_file: Path, dest_path: Optional[Path] = None) -> bool:
         """Restore *backup_file* over *dest_path* (default: the target path).
 
         Returns ``True`` only after the destination was atomically replaced.
         The backup is untrusted user-owned input, so symlinks, NUL bytes, and
-        command substitution are rejected before any privileged write.
+        command substitution in live (non-comment) code are rejected before any
+        privileged write.  On failure ``last_error`` explains why.
         """
         destination = dest_path if dest_path is not None else self.target_path
+        self.last_error = ''
 
         if os.geteuid() != 0:
+            self.last_error = f'root permissions required to write {destination}'
             print(f"Error: Root permissions required to write to {destination}.", file=sys.stderr)
             return False
 
@@ -131,22 +159,30 @@ class BackupMgr:
             # untrusted input: reject symlinks/non-regular files and bound size.
             data = self.user_config.safe_read_bytes(backup_file)
             if b'\x00' in data:
-                print(f"Error: Backup {backup_file.name} contains NUL bytes.", file=sys.stderr)
+                self.last_error = f'{backup_file.name} contains NUL bytes'
+                print(f"Error: Backup {self.last_error}.", file=sys.stderr)
                 return False
 
-            # /etc/default/grub is sourced by the distro's GRUB scripts, so a
-            # restored file containing command substitution is root code
-            # execution.  A backup is user-writable input; refuse it.
-            if b'$(' in data or b'`' in data:
-                print(f"Error: Backup {backup_file.name} contains command substitution; "
-                      "refusing to restore.", file=sys.stderr)
+            # /etc/default/grub is sourced by the distro's GRUB scripts, so
+            # command substitution in live code is root code execution.  A
+            # comment is inert, so it is not a reason to refuse the restore.
+            bad_line = self._command_substitution_line(data)
+            if bad_line is not None:
+                self.last_error = (f'{backup_file.name} contains command '
+                                   f'substitution on line {bad_line}; refusing to restore')
+                print(f"Error: Backup {self.last_error}.", file=sys.stderr)
                 return False
 
             # Atomic, symlink-safe replacement of the target.
             self.user_config.atomic_root_write(destination, data, mode=0o644)
             print(f"Success: Restored {backup_file.name} to {destination}")
             return True
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RuntimeError) as e:
+            # RuntimeError covers the directory-security checks in
+            # UserConfigDir (a non-root-owned parent, a symlinked directory).
+            # It is a user-triggered action, so report it in the UI instead of
+            # letting it escape curses as a traceback.
+            self.last_error = f'{e}'
             print(f"Error restoring backup {backup_file} to {destination}: {e}", file=sys.stderr)
             return False
     # -----------------------------------------------------------------------

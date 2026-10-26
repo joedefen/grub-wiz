@@ -39,17 +39,22 @@ class FakeScreen:
 
 
 class FakeWin:
-    """Minimal ConsoleWindow stand-in for ScreenStack and alert() calls."""
+    """Minimal ConsoleWindow stand-in for ScreenStack and alert()/flash()."""
 
     def __init__(self):
         self.pick_pos = 0
         self.scroll_pos = 0
         self.free_scroll = False
         self.alerts = []
+        self.flashes = []
 
     def alert(self, message=None, **_kwargs):
         """Record the alert instead of drawing it."""
         self.alerts.append(message)
+
+    def flash(self, message='', duration=2.0):
+        """Record the transient notice instead of drawing it."""
+        self.flashes.append(message)
 
 
 def make_stack_owner():
@@ -115,7 +120,23 @@ def test_failed_restore_does_not_reinitialize():
 
     assert calls == []
     assert win.alerts == ['ERR: restore of '
-                          "'20990101-000000-DEADBEEF.custom.bak' failed"]
+                          "'20990101-000000-DEADBEEF.custom.bak' failed: "
+                          'unknown error']
+
+
+def test_failed_restore_reports_the_reason_from_backup_mgr():
+    """The alert must carry why the restore failed, not just that it did.
+
+    BackupMgr only writes the reason to stderr, which curses hides, so the
+    screen has to forward ``last_error`` or the user is left with "failed".
+    """
+    screen, win, _calls = make_restore_screen(restore_ok=False)
+    screen.gw.backup_mgr.last_error = 'stock.bak contains command substitution on line 1'
+
+    screen.restore_ACTION()
+
+    assert len(win.alerts) == 1
+    assert 'command substitution on line 1' in win.alerts[0]
 
 
 def test_successful_restore_rebuilds_with_fresh_stack():
@@ -127,22 +148,26 @@ def test_successful_restore_rebuilds_with_fresh_stack():
     assert calls == ['reinit', 'reset', 'startup']
 
 
-def test_successful_restore_explains_two_step_behavior():
-    """Restoring only changes the source; the user must write to activate it.
+def test_successful_restore_notifies_without_an_alert():
+    """A successful restore is reported as an OK flash, not a modal ALERT.
 
-    Restore intentionally does not run update-grub (audit M15).  The notice
-    must say that grub.cfg has not been regenerated so the returned main
-    screen is not mistaken for an active configuration.
+    Nothing went wrong, so popping a modal titled ALERT made a normal outcome
+    look like a failure.  The transient notice must still say the source was
+    restored and that a write (which runs update-grub) is what applies it,
+    because restore alone deliberately does not regenerate grub.cfg (audit
+    M15).
     """
     screen, win, _calls = make_restore_screen(restore_ok=True)
 
     screen.restore_ACTION()
 
-    assert len(win.alerts) == 1
-    notice = win.alerts[0]
-    assert "'20990101-000000-DEADBEEF.custom.bak' restored" in notice
-    assert 'grub.cfg has NOT been regenerated' in notice
-    assert 'Write the configuration' in notice
+    assert win.alerts == []
+    assert len(win.flashes) == 1
+    notice = win.flashes[0]
+    assert notice.startswith('OK')
+    assert 'restored' in notice
+    assert 'press w' in notice
+    assert 'update-grub' in notice
 
 
 def test_restore_uses_the_selected_path_not_checksum_lookup():

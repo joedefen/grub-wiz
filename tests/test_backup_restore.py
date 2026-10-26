@@ -87,6 +87,7 @@ def test_restore_rejects_symlinked_backup(tmp_path, isolated_user_config_dir,
     (b'GRUB_TIMEOUT=9\x00\n', 'NUL'),
     (b'GRUB_DISTRIBUTOR=$(reboot)\n', 'command substitution'),
     (b'GRUB_DISTRIBUTOR=`reboot`\n', 'command substitution'),
+    (b'# a comment cannot hide it\nGRUB_DISTRIBUTOR=`reboot`\n', 'line 2'),
 ])
 def test_restore_rejects_untrusted_payloads(tmp_path, isolated_user_config_dir,
                                             monkeypatch, payload, expected,
@@ -99,6 +100,44 @@ def test_restore_rejects_untrusted_payloads(tmp_path, isolated_user_config_dir,
     assert manager.restore_backup(backup) is False
     assert target.read_bytes() == CONTENT
     assert expected in capsys.readouterr().err
+    # The TUI shows last_error, so it must carry the reason too.
+    assert expected in manager.last_error
+
+
+# Debian's stock /etc/default/grub documents GRUB_GFXMODE with a backtick in a
+# comment ("the command `videoinfo'").  Scanning raw bytes refused to restore a
+# file the user had just backed up from their own machine.
+STOCK_WITH_COMMENT_BACKTICK = (
+    b'# note that you can see them in real GRUB with the command `videoinfo\'\n'
+    b'#GRUB_GFXMODE=640x480\n'
+    b'GRUB_TIMEOUT=9\n'
+)
+
+
+def test_restore_allows_command_syntax_inside_comments(tmp_path,
+                                                       isolated_user_config_dir,
+                                                       monkeypatch):
+    manager, target = make_manager(tmp_path, isolated_user_config_dir)
+    backup = isolated_user_config_dir.user_state_dir / 'stock.bak'
+    backup.write_bytes(STOCK_WITH_COMMENT_BACKTICK)
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+
+    assert manager.restore_backup(backup) is True
+    assert target.read_bytes() == STOCK_WITH_COMMENT_BACKTICK
+    assert manager.last_error == ''
+
+
+def test_restore_clears_last_error_on_success(tmp_path, isolated_user_config_dir,
+                                              monkeypatch):
+    """A stale reason must not be attached to a later successful restore."""
+    manager, _target = make_manager(tmp_path, isolated_user_config_dir)
+    manager.last_error = 'something old'
+    backup = isolated_user_config_dir.user_state_dir / 'new.bak'
+    backup.write_bytes(b'GRUB_TIMEOUT=9\n')
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+
+    assert manager.restore_backup(backup) is True
+    assert manager.last_error == ''
 
 
 def test_restore_replaces_target_atomically(tmp_path, isolated_user_config_dir,
@@ -139,6 +178,7 @@ def test_restore_write_failure_returns_false(tmp_path, isolated_user_config_dir,
 
     assert manager.restore_backup(backup) is False
     assert target.read_bytes() == CONTENT
+    assert 'disk full' in manager.last_error
 
 
 def test_create_backup_missing_target_returns_none(tmp_path,

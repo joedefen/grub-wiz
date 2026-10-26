@@ -809,15 +809,20 @@ class RestoreScreen(GrubWizScreen):
         # restore leaves /etc/default/grub untouched, so rebuilding the
         # screens from it would silently discard the user's state for nothing.
         if not gw.backup_mgr.restore_backup(target):
-            self.win.alert(message=f'ERR: restore of {target.name!r} failed')
+            # BackupMgr explains itself on stderr, which curses hides; show
+            # the reason in the alert so the failure is actionable.
+            reason = getattr(gw.backup_mgr, 'last_error', '') or 'unknown error'
+            self.win.alert(message=f'ERR: restore of {target.name!r} failed: {reason}')
             return
-        # State the intentional two-step behavior at the moment it matters.
-        # The screens now show the restored values, but grub.cfg still comes
-        # from the old configuration until a write runs update-grub (audit M15).
-        self.win.alert(message=(
-            f'{target.name!r} restored to {gw.backup_mgr.target_path}.\n'
-            'grub.cfg has NOT been regenerated.  Write the configuration '
-            'when you want the restored settings to become active.'))
+        # State the intentional two-step behavior at the moment it matters,
+        # but keep it non-modal: nothing went wrong.  A modal ALERT box for a
+        # successful restore made a normal outcome look like a problem.  The
+        # flash is transient (any key dismisses it) and names the follow-up
+        # action: grub.cfg still comes from the old configuration until a
+        # write runs update-grub (audit M15).
+        self.win.flash(
+            message='OK: /etc/default/grub restored - press w to apply (update-grub)',
+            duration=3.0)
         while gw.navigate_back():
             pass
         gw.reinit_gw()
