@@ -34,6 +34,7 @@ from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 from .UserConfigDir import UserConfigDir
+from .SyncCheck import run_sync_check
 
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
 SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
@@ -2334,6 +2335,15 @@ def main():
             print('Factory reset complete. Backup files (.bak) preserved.')
         except OSError as whynot:
             print(f'ERR: failed "factory reset" [{whynot}]')
+        sys.exit(0)
+
+    # The defaults file is only "installed" once update-grub has regenerated
+    # grub.cfg from it.  Ask before the screens open when the menu is older,
+    # because then what the user is about to edit is not what will boot.
+    # Diagnostic modes above have already exited; a missing grub.cfg is
+    # reported by DistroVars as crippled mode and makes the check meaningless.
+    if not run_sync_check(wiz.distro_vars.etc_grub, wiz.distro_vars.grub_cfg):
+        print('Aborting.')
         sys.exit(0)
 
     time.sleep(1.0)

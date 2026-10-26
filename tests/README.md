@@ -16,6 +16,7 @@ tests/
 ├── test_param_discovery_internals.py # info parsing, cache rules, discovery CLI
 ├── test_backup_restore.py            # Restore security guards and checksums
 ├── test_distro_vars.py               # Startup path/binary resolution and gating
+├── test_sync_check.py                # /etc/default/grub vs generated grub.cfg mtimes
 ├── test_canned_config_loading.py     # Custom-config loading and fallbacks
 ├── test_warn_db_persistence.py       # Warning DB formats and write failures
 ├── test_main_helpers.py              # Non-curses helpers in main.py

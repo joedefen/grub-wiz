@@ -240,6 +240,18 @@ Notes:
 - Restoring a backup is refused if it is a symlink, contains NUL bytes, or contains shell command substitution (a backtick or `$(`). This prevents a crafted backup from executing as root when the distro sources `/etc/default/grub`.
 
 ---
+
+#### Startup Config/Menu Sync Check
+
+`/etc/default/grub` is only *installed* once `update-grub` (or `grub-mkconfig`) has regenerated `grub.cfg` from it. Before the screens open, grub-wiz compares their modification times and prints both timestamps:
+
+- `/etc/default/grub` newer than `grub.cfg` — the generated menu does not reflect the defaults file yet. This happens after a hand edit, or after a restore, which deliberately does not regenerate the menu. grub-wiz asks `Continue? [Y/n]`; Enter continues and `n` aborts.
+- `grub.cfg` more than four hours newer — printed as a note instead of a prompt. This is the normal result of a kernel or GRUB package update. It is only worth investigating if `/etc/default/grub` was replaced from a backup with its old timestamp preserved.
+- Differences of a second or less, or a generated file less than four hours newer, are treated as in sync and print nothing.
+
+The check is skipped when `grub.cfg` is missing (already reported as crippled mode), and it never runs in the `--discovery`, `--factory-reset`, `--validate-custom-config` or `--validator-demo` modes. Timestamps are a heuristic: `cp -p`, `tar`, a restored config directory or a clock change can mislead them.
+
+---
 #### Parameter Discovery and Excluded Parameters
 Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens so that you do not add it from the confusion. Discovery runs automatically at startup whenever the cache is missing (for example on a fresh install) or older than one week, so the filtering is never decided by a missing or stale cache. Notes:
 - We recommend installing GRUB documentation for best results:
