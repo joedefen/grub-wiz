@@ -40,7 +40,7 @@ grub-wiz          # or: python3 runner
 ## The take
 
 - **[START]** Let the `EDIT` screen settle.
-    * Navigate to `TIMOUT`
+    * Navigate to `TIMEOUT`
 
 - **[EDIT]** On `TIMEOUT`, press `[e]dit`
     * Change value to 29.

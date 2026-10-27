@@ -269,30 +269,36 @@ and treats a second delete as "nothing to do".
 
 ### `test_glyphs.py`
 
-Pins the glyph table and the fallback: every entry has a plain-ASCII form, the
-Unicode set is the default, and `set_ascii()` swaps the meaningful ones
-consistently (`⚠️`→`(!)`, `✘`→`X`, `🟌`→`*`, `⮜–⮞`→`<->`). The font check
-always prints the real Unicode characters, even in ASCII mode, because that is
-what it checks. `terminal_report()` is covered for UTF-8 spellings, non-UTF-8
-encodings (which force ASCII), `TERM=dumb` (forces ASCII) and `TERM=linux`
-(warns without forcing — a console font's coverage cannot be observed).
+Pins grub-wiz's *vocabulary* against the registry in `console_window.glyphs`
+(the mechanism -- the table, detection, `--ascii` and the substitution applied
+while drawing -- is tested in the library's own suite). Every entry has a
+plain-ASCII form, the Unicode set is the default, `set_ascii()` swaps the
+meaningful ones consistently (`⚠️`→`(!)`, `✘`→`X`, `🟌`→`*`, `⮜–⮞`→`<->`), and
+the font check prints the real Unicode characters even in ASCII mode. Also pins
+the new shared behaviour: the library's transliterator downgrades grub-wiz's
+registered symbols inside arbitrary text (`abort 🛑` → `abort STOP`), leaves
+prose and parameter values alone (`Grüße`, `GRUB_CMDLINE_LINUX=...`), and
+`register_all()` restores the vocabulary after anything resets the registry.
 
 ### `test_theme_picker.py`
 
 Covers the COLOR THEME screen built by `console_window.Theme`: it derives from
 `GrubWizScreen` (so ESC and `?` keep working there), `t` cycles to the next
-theme, wraps around, applies the theme to the live window and then calls
-`remember_theme()`. Also pins that the picker key is absent from the EDIT
-header but present on the help screen together with the font check,
-`--theme`/saved/default precedence, a stale saved theme degrading to the
-default, and that only a changed theme is written to `UiPrefs`.
+theme, wraps around, applies the theme to the live window, and remembers it
+through `PREFS_THEME_STORE` → `UiPrefs`. Also pins that a failing store never
+breaks the cycle, that the picker key is absent from the EDIT header but
+present on the help screen together with the font check, `--theme`/saved/default
+precedence via `Theme.initial()`, a stale saved theme degrading to the default,
+and that the HELP and THEME screens paint only ASCII rows in ASCII mode.
 
 ### `test_cli_branches.py`
 
 Covers `--validate-custom-config`, `--factory-reset` (including partial
 failure), `--validator-demo`, the pre-curses ordering of the purge and the
 `BASELINE` record, `-k`/`--keep-all-bak` suppressing only the purge, the
-`--theme`/`--ascii` switches, and the `GrubCfgParser`/`DistroVars` module entry
+`--theme`/`--ascii`/`--ascii=no`/`--glyphs` switches as wired by
+`build_parser()` and `console_window.cli`, and the `GrubCfgParser`/`DistroVars`
+module entry
 points.
 
 ## Test Data Files

@@ -25,7 +25,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
-                            InlineConfirmation, BasicTextScreen, Theme)
+                            InlineConfirmation, BasicTextScreen, BasicHelpScreen,
+                            Theme)
+from console_window import cli as display_cli
+from console_window import help as display_help
 from .Glyphs import Glyphs
 from .UiPrefs import UiPrefs
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
@@ -1381,75 +1384,74 @@ class WarnScreen(GrubWizScreen):
         self.gw.search_bar.start(self.search)
         self.gw.win.passthrough_mode = True
 
-# The theme picker is built by console-window: it draws the swatches and knows
-# how to apply a theme to the live window, so this app only has to say which
-# key cycles it and to remember the result.  Deriving it from GrubWizScreen
-# (rather than from Screen) keeps the app-level action set, so ESC and ? still
-# work on that screen.
-ThemePickerScreen = Theme.create_picker_screen(GrubWizScreen)
+class _PrefsThemeStore:
+    """``ThemeStore`` over the running application's ``UiPrefs``.
+
+    The picker class is built at import time, before any ``GrubWiz`` exists, so
+    this store reaches the live preferences through ``GrubWiz.singleton``
+    instead of holding a reference captured here.  A missing application (a
+    bare screen in a test) means "nothing remembered", which is not an error.
+    """
+
+    @staticmethod
+    def _prefs():
+        return getattr(GrubWiz.singleton, 'prefs', None)
+
+    def load(self):
+        prefs = self._prefs()
+        return prefs.load() if prefs is not None else None
+
+    def save(self, name):
+        prefs = self._prefs()
+        if prefs is None:
+            return
+        # ``win.theme`` is authoritative: curses installs one palette per
+        # terminal and the window records the name it resolved, so storing
+        # anything else could disagree with what the user just saw.
+        GrubWiz.singleton.theme_name = Theme.resolve(name)
+        prefs.save(GrubWiz.singleton.theme_name)
 
 
-class ThemeScreen(ThemePickerScreen):
-    """COLOR THEME screen: ``t`` cycles the themes, ``ESC`` returns."""
+#: One store object, shared by the CLI help text and the picker.
+PREFS_THEME_STORE = _PrefsThemeStore()
 
-    def draw_screen(self):
-        """Draw the picker swatches plus a dim note about persistence."""
-        super().draw_screen()
-        self.win.add_body('The choice is remembered for the next start.',
-                          attr=cs.A_DIM)
+# The theme picker is console-window's: it draws the swatches, applies the
+# choice to the live window, discovers the key this app bound to ``spin_theme``
+# for its hint line, and remembers the result through the store above.
+# Deriving it from GrubWizScreen (rather than from Screen) keeps the app-level
+# action set, so ESC and ? still work on that screen.
+ThemeScreen = Theme.create_picker_screen(
+    GrubWizScreen,
+    cycle_key='t',
+    store=PREFS_THEME_STORE,
+    note='The choice is remembered for the next start.',
+)
 
-    def spin_theme_ACTION(self):
-        """Cycle to the next theme, then remember the one now on screen."""
-        super().spin_theme_ACTION()
-        self.gw.remember_theme()
 
+class HelpScreen(GrubWizScreen, BasicHelpScreen):
+    """HELP screen: navigation keys, the option list, then the display notes."""
 
-class HelpScreen(GrubWizScreen):
-    """HELP screen"""
+    # The font check belongs here: it is where a user goes when the screen
+    # looks wrong, and it only helps if it prints the real glyphs.  In ASCII
+    # mode the same slot explains how to try the full set again.
+    show_display_notes = True
 
     def extra_help_paragraphs(self):
-        """Non-binding help: the theme picker and the font check.
+        """Non-binding copy: the theme picker and what it remembers.
 
-        Neither belongs in a header: a header is already the scarcest line on
-        screen, and both notes are only interesting when something looks wrong
-        (a theme whose colors are unreadable, or a font without the glyphs).
-        The glyph check has to show the real characters -- nothing inside the
-        process can tell whether the *font* draws them.
+        Not a header: the header is already the scarcest line on screen, and
+        this is only interesting when something looks wrong.  Wrapping and the
+        dim attribute come from ``BasicHelpScreen.draw_notes()``.
         """
-        theme = (
-            'Color theme: press T for the theme picker, then t to cycle the '
-            'themes (ESC returns).  The default follows your terminal colors. '
-            'If warnings, stars or highlights are hard to read, pick another '
-            'theme; the choice is remembered for the next start.')
-        glyphs = Glyphs.probe_text()
-        if Glyphs.is_ascii():
-            font = (
-                f'Font check: ASCII symbols are in use (--ascii).  To try the '
-                f'Unicode set, restart without --ascii and look for: {glyphs}')
-        else:
-            font = (
-                f'Font check: grub-wiz draws {glyphs}.  If any of these shows '
-                'as a box or is blank, the font cannot draw it: restart with '
-                '"grub-wiz --ascii" to use plain ASCII symbols instead.')
-        return [theme, font]
-
-    def draw_notes(self):
-        """Draw the extra help paragraphs, wrapped to the window width."""
-        win = self.win
-        # A few cells of slack: textwrap counts code points, while the emoji
-        # glyphs in the check line take two terminal cells each.
-        width = max(win.cols - 8, 20)
-        for paragraph in self.extra_help_paragraphs():
-            for line in textwrap.wrap(paragraph, width=width):
-                win.add_body(line, attr=cs.A_DIM)
+        return (display_help.theme_paragraph('T', 't', remembered=True),)
 
     def draw_screen(self):
         """Draw navigation-key and body help for the current screen."""
         gw, win = self.gw, self.win
-        self.win.set_pick_mode(False)
+        win.set_pick_mode(False)
         gw.spinner.show_help_nav_keys(win)
         gw.spinner.show_help_body(win)
-        self.draw_notes()
+        self.draw_notes(win)
 
 
 # --- Shell-value validation for /etc/default/grub --------------------------
@@ -1651,7 +1653,12 @@ class GrubWiz:
         # the saved theme is the one the window starts with.  ``--theme`` wins
         # for this run without overwriting what the user remembered.
         self.prefs = UiPrefs()
-        self.theme_name = self._initial_theme(cli_opts)
+        # console-window resolves the same precedence the picker uses: an
+        # explicit --theme, else the remembered choice, else the
+        # terminal-default theme.  A stale name (a theme the library dropped, a
+        # hand-edited preference) degrades instead of failing to draw.
+        self.theme_name = Theme.initial(
+            getattr(cli_opts, 'theme', None) if cli_opts else None, self.prefs)
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
@@ -1664,30 +1671,6 @@ class GrubWiz:
         # draw rather than being taught what a row is; see begin_confirm().
         self.confirm_scope, self.confirm_item_key = 'header', None
         self.reinit_gw()
-
-    def _initial_theme(self, cli_opts):
-        """The theme to start with: ``--theme``, else the remembered choice.
-
-        ``Theme.resolve`` also validates a stale name (a theme removed from
-        console-window, or a hand-edited preference), so an unusable value
-        degrades to the terminal-default theme instead of failing to draw.
-        """
-        requested = getattr(cli_opts, 'theme', None) if cli_opts else None
-        return Theme.resolve(requested or self.prefs.get('theme'))
-
-    def remember_theme(self):
-        """Persist the theme the window is actually drawing with.
-
-        ``win.theme`` is authoritative: curses installs one palette per
-        terminal, and the window records the name it resolved, so a preference
-        stored from anything else could disagree with what the user just saw.
-        """
-        name = Theme.resolve(getattr(self.win, 'theme', None))
-        if name == self.theme_name:
-            return name
-        self.theme_name = name
-        self.prefs.set('theme', name)
-        return name
 
     ####################################################################
     # Inline (non-modal) confirmations
@@ -2939,30 +2922,12 @@ def rerun_module_as_root(module_name):
         os.execvp('sudo', vp)
 
 
-def apply_glyph_policy(force_ascii=False):
-    """Choose the symbol set once, before curses takes the terminal.
+def build_parser():
+    """The command line: grub-wiz's own switches plus console-window's.
 
-    Only the terminal's *encoding* is detectable; whether its font has a glyph
-    for a code point is not (see ``grub_wiz/Glyphs.py``).  So this prints the
-    real glyphs as a check the user can look at, and switches to ASCII only
-    when the terminal provably cannot carry them -- or when ``--ascii`` says so.
-
-    Returns True when the ASCII set is in use.
+    Separated from ``main()`` so the flags can be tested without running the
+    editor (and without the sudo re-exec).
     """
-    if force_ascii:
-        Glyphs.set_ascii(True)
-        print('grub-wiz: using ASCII symbols (--ascii)')
-        return True
-    report = Glyphs.terminal_report()
-    Glyphs.set_ascii(report.ascii_required)
-    for note in report.notes:
-        print(f'grub-wiz: {note}')
-    return report.ascii_required
-
-
-def main():
-    """Parse CLI options and start the TUI or the requested diagnostic mode."""
-    rerun_module_as_root('grub_wiz.main')
     parser = ArgumentParser(description='grub-wiz: your grub-update guide')
     parser.add_argument('--discovery', '--parameter-discovery', default=None,
                         choices=('enable', 'disable', 'show'),
@@ -2977,13 +2942,18 @@ def main():
                         help='for test only: enables screen redraw indicator')
     parser.add_argument('-k', '--keep-all-bak', action='store_true',
                         help='keep every backup; skip the start-up purge')
-    parser.add_argument('--theme', default=None, choices=Theme.list_all(),
-                        help='color theme for this run (otherwise the remembered '
-                             'choice; the default follows your terminal colors)')
-    parser.add_argument('--ascii', action='store_true',
-                        help='use plain ASCII symbols instead of Unicode glyphs '
-                             '(for fonts that show boxes)')
-    opts = parser.parse_args()
+    # --ascii (with an optional boolean), --glyphs and --theme come from
+    # console-window, so the flags mean the same thing here as in every other
+    # app built on the library.  Passing the store only makes the help text
+    # say what is true: the choice is remembered.
+    display_cli.add_display_arguments(parser, theme_store=PREFS_THEME_STORE)
+    return parser
+
+
+def main():
+    """Parse CLI options and start the TUI or the requested diagnostic mode."""
+    rerun_module_as_root('grub_wiz.main')
+    opts = build_parser().parse_args()
 
     wiz = GrubWiz(cli_opts=opts)
     if opts.validator_demo:
@@ -3034,9 +3004,10 @@ def main():
         sys.exit(0)
 
     # Decide the symbol set while the terminal is still a normal terminal: the
-    # check has to print the glyphs themselves, and it must be settled before
-    # curses draws a single row.
-    apply_glyph_policy(opts.ascii)
+    # font check has to print the glyphs themselves, and the mode must be
+    # settled before curses draws a single row.  This also prints what was
+    # detected and seeds the window's theme from --theme.
+    display_cli.apply_display_arguments(opts, prog='grub-wiz')
 
     # The defaults file is only "installed" once update-grub has regenerated
     # grub.cfg from it.  Ask before the screens open when the menu is older,

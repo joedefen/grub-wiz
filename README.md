@@ -225,13 +225,14 @@ The picker's key is deliberately kept out of the header lines — headers are fo
 * The `default` theme follows your terminal's own colors. If warnings, stars or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
 * `--theme NAME` picks a theme for one run without changing the remembered choice.
 
-The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). No program can tell whether the *font* in use actually has those glyphs, so grub-wiz:
+The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). That handling now lives in the [`console-window`](../console-window) library, so grub-wiz only declares its vocabulary and every console-window app benefits from the same behaviour:
 
-1. checks what it can — a non-UTF-8 terminal or `TERM=dumb` switches to the ASCII symbols by itself and says so;
-2. prints a "font check" line containing the real characters at start-up, and repeats it on the help screen, so you can look at them (or copy the line into a shell);
-3. replaces every symbol with a plain-ASCII equivalent (`<->`, `X`, `*`, `(!)`, …) when you restart with `grub-wiz --ascii`.
+1. it checks what it can — a non-UTF-8 terminal or `TERM=dumb` switches to the ASCII symbols by itself and says so;
+2. it prints a "font check" line containing the real characters at start-up, and repeats it on the help screen, so you can look at them (or copy the line into a shell);
+3. `grub-wiz --ascii` forces the plain-ASCII equivalents (`<->`, `X`, `*`, `(!)`, …); `--ascii=no` (or `--glyphs=unicode`) forces the Unicode set back;
+4. while drawing, only the symbols grub-wiz registered are substituted, so real content — a `GRUB_CMDLINE_LINUX` value, a backup's UTF-8 lines — is never rewritten.
 
-If the symbol line looks right, there is nothing to do. If any symbol is a box or blank, use `--ascii`.
+If the symbol line looks right, there is nothing to do. If any symbol is a box or blank, use `--ascii`. `python -m grub_wiz.Glyphs` prints the same font check without starting the editor, and `CONSOLE_WINDOW_GLYPH_AUDIT=1` reports any decorative character that grub-wiz draws without registering a fallback.
 
 ---
 #### Files, State, and Residue

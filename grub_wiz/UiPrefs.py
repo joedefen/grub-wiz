@@ -6,6 +6,10 @@ It is deliberately separate from ``WarnDB``: that file is reconciled against
 validator output on every start, which would be the wrong home for a value the
 user sets by hand and expects to survive untouched.
 
+The class also implements ``console_window.theme.ThemeStore`` (``load()`` and
+``save()``), which is how the library's theme picker remembers a choice without
+ever learning where -- or in what format -- this file lives.
+
 The file is user-owned state, so it lives in ``~/.config/grub-wiz`` and every
 write goes through ``UserConfigDir.atomic_user_write()`` (symlink-safe, atomic
 replace).  A hand-edited or corrupt file is ignored rather than fatal: a
@@ -104,6 +108,26 @@ class UiPrefs:
     def as_dict(self) -> dict:
         """Return a copy of the stored preferences."""
         return dict(self.data)
+
+    # --- console_window.theme.ThemeStore ---------------------------------
+    def load(self) -> Optional[str]:
+        """The remembered theme name, or None (``ThemeStore.load``).
+
+        A non-string (a hand edit can put anything in the file) reads as
+        "nothing remembered": the theme is cosmetic, so a corrupt value must
+        not be able to stop the editor from drawing.
+        """
+        value = self.get('theme')
+        return value if isinstance(value, str) and value else None
+
+    def save(self, name: str) -> None:
+        """Remember *name* as the theme (``ThemeStore.save``).
+
+        ``set()`` already prints a warning and keeps the value in memory when
+        the write fails, so a read-only config directory degrades to "works for
+        this session, not remembered" instead of breaking the picker.
+        """
+        self.set('theme', name)
 
 
 def get_pref(key: str, default: Optional[Any] = None) -> Any:

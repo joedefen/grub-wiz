@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import grub_wiz.DistroVars as dv_mod
 import grub_wiz.main as cli
+from console_window import Theme
 from grub_wiz.Glyphs import Glyphs
 from grub_wiz.GrubCfgParser import main as parser_main
 from grub_wiz.UiPrefs import UiPrefs
@@ -136,27 +137,68 @@ def test_validator_demo_exits_zero(monkeypatch, fake_wiz):
     assert seen == [{'GRUB_TIMEOUT': '5'}]
 
 
-def test_ascii_switch_forces_the_ascii_glyph_set(capsys):
+@pytest.fixture(autouse=True)
+def _restore_display_state():
+    """The glyph mode and the theme are process-wide; never leak them."""
+    previous_theme = Theme.get_current()
+    Glyphs.register_all()
     Glyphs.set_ascii(False)
-    try:
-        assert cli.apply_glyph_policy(force_ascii=True) is True
-        assert Glyphs.is_ascii() is True
-        assert 'ASCII symbols' in capsys.readouterr().out
-    finally:
-        Glyphs.set_ascii(False)
+    yield
+    Theme.set_active(previous_theme)
+    Glyphs.register_all()
+    Glyphs.set_ascii(False)
+
+
+def apply_display(argv, capsys, monkeypatch=None):
+    """Parse *argv* with the real parser, then run the app's display wiring."""
+    opts = cli.build_parser().parse_args(argv)
+    report = cli.display_cli.apply_display_arguments(opts, prog='grub-wiz')
+    return report, capsys.readouterr().out
+
+
+def test_the_parser_offers_the_library_display_switches(capsys):
+    help_text = cli.build_parser().format_help()
+
+    assert '--ascii' in help_text
+    assert '--glyphs' in help_text
+    assert '--theme' in help_text
+    assert 'remembered' in help_text     # the store really does remember
+
+
+def test_ascii_switch_forces_the_ascii_glyph_set(capsys):
+    report, out = apply_display(['--ascii'], capsys)
+
+    assert report.ascii_mode is True
+    assert Glyphs.is_ascii() is True
+    assert out.startswith('grub-wiz: ')
+
+
+def test_ascii_can_be_turned_off_explicitly(capsys):
+    """Symmetry with --ascii: --ascii=no means "force the Unicode set"."""
+    report, _out = apply_display(['--ascii=no'], capsys)
+
+    assert report.ascii_mode is False
+    assert Glyphs.is_ascii() is False
 
 
 def test_glyph_policy_follows_the_terminal_report(monkeypatch, capsys):
     """A terminal that cannot carry the glyphs must switch the app to ASCII."""
-    report = SimpleNamespace(ascii_required=True, notes=('needs ascii',))
-    monkeypatch.setattr(cli.Glyphs, 'terminal_report', staticmethod(lambda: report))
+    monkeypatch.setenv('TERM', 'dumb')
+    monkeypatch.delenv('CONSOLE_WINDOW_GLYPHS', raising=False)
 
-    try:
-        assert cli.apply_glyph_policy(force_ascii=False) is True
-        assert Glyphs.is_ascii() is True
-        assert 'needs ascii' in capsys.readouterr().out
-    finally:
-        Glyphs.set_ascii(False)
+    report, out = apply_display([], capsys)
+
+    assert report.ascii_required is True
+    assert Glyphs.is_ascii() is True
+    assert 'TERM=dumb' in out
+
+
+def test_theme_switch_seeds_the_first_window(monkeypatch, capsys):
+    monkeypatch.setattr(Theme, '_current', None)
+
+    apply_display(['--theme=gruvbox'], capsys)
+
+    assert Theme.get_current() == 'gruvbox'
 
 
 def test_grub_cfg_parser_cli_requires_one_path(capsys):
