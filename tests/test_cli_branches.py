@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import grub_wiz.DistroVars as dv_mod
 import grub_wiz.main as cli
+from grub_wiz.Glyphs import Glyphs
 from grub_wiz.GrubCfgParser import main as parser_main
+from grub_wiz.UiPrefs import UiPrefs
 
 
 @pytest.fixture(name='fake_wiz')
@@ -73,6 +75,26 @@ def test_factory_reset_deletes_caches_but_keeps_backups(monkeypatch, fake_wiz,
     assert 'Backup files (.bak) preserved' in capsys.readouterr().out
 
 
+def test_factory_reset_also_clears_the_remembered_theme(monkeypatch, fake_wiz,
+                                                        tmp_path, capsys):
+    """The theme choice is user preference, so a reset must clear it too."""
+    cache = tmp_path / 'system-params.yaml'
+    warn_db = tmp_path / 'warn-db.yaml'
+    for path in (cache, warn_db):
+        path.write_text('data', encoding='utf-8')
+    fake_wiz.param_discovery = SimpleNamespace(cache_file=cache)
+    fake_wiz.warn_db = SimpleNamespace(yaml_path=warn_db)
+    fake_wiz.prefs = UiPrefs()
+    fake_wiz.prefs.set('theme', 'nord')
+
+    code = run_main(monkeypatch, '--factory-reset')
+
+    assert code == 0
+    assert not fake_wiz.prefs.yaml_path.exists()
+    assert fake_wiz.prefs.get('theme') is None
+    assert 'ui-prefs.yaml' in capsys.readouterr().out
+
+
 def test_factory_reset_with_nothing_to_delete(monkeypatch, fake_wiz,
                                               tmp_path, capsys):
     fake_wiz.param_discovery = SimpleNamespace(
@@ -112,6 +134,29 @@ def test_validator_demo_exits_zero(monkeypatch, fake_wiz):
 
     assert run_main(monkeypatch, '--validator-demo') == 0
     assert seen == [{'GRUB_TIMEOUT': '5'}]
+
+
+def test_ascii_switch_forces_the_ascii_glyph_set(capsys):
+    Glyphs.set_ascii(False)
+    try:
+        assert cli.apply_glyph_policy(force_ascii=True) is True
+        assert Glyphs.is_ascii() is True
+        assert 'ASCII symbols' in capsys.readouterr().out
+    finally:
+        Glyphs.set_ascii(False)
+
+
+def test_glyph_policy_follows_the_terminal_report(monkeypatch, capsys):
+    """A terminal that cannot carry the glyphs must switch the app to ASCII."""
+    report = SimpleNamespace(ascii_required=True, notes=('needs ascii',))
+    monkeypatch.setattr(cli.Glyphs, 'terminal_report', staticmethod(lambda: report))
+
+    try:
+        assert cli.apply_glyph_policy(force_ascii=False) is True
+        assert Glyphs.is_ascii() is True
+        assert 'needs ascii' in capsys.readouterr().out
+    finally:
+        Glyphs.set_ascii(False)
 
 
 def test_grub_cfg_parser_cli_requires_one_path(capsys):

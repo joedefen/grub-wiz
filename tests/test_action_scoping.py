@@ -41,6 +41,8 @@ ACTIONS = [
     ('baseline', ord('b')),
     ('compare', ord('c')),
     ('slash', ord('/')),
+    ('theme_screen', ord('T')),
+    ('spin_theme', ord('t')),
 ]
 
 
@@ -69,6 +71,7 @@ def make_ui():
         cli.COMPARE_ST: _screen(cli.CompareScreen),
         cli.WARN_ST: _screen(cli.WarnScreen),
         cli.HELP_ST: _screen(cli.HelpScreen),
+        cli.THEME_ST: _screen(cli.ThemeScreen),
     }
     # Navigation hooks and the one recording-action test need a small app stub.
     app = SimpleNamespace(
@@ -110,6 +113,9 @@ def test_action_scope_matches_the_screens_that_implement_it():
     assert scope('slash') == WARN_ACTION_SCREENS
     for action in ('restore', 'delete', 'tag', 'view', 'baseline', 'compare'):
         assert scope(action) == {cli.RESTORE_ST}
+    # The picker opens from anywhere, but its cycle key only exists on it.
+    assert scope('theme_screen') == ALL_SCREENS
+    assert scope('spin_theme') == {cli.THEME_ST}
     # Base-screen actions remain available everywhere.
     for action in ('escape', 'help_mode', 'enter_restore', 'enter_warnings'):
         assert scope(action) == ALL_SCREENS
@@ -202,6 +208,24 @@ def test_enter_warnings_only_navigates_from_home_or_review():
         is_curr=lambda screens: cli.REVIEW_ST in screens)
     screen.enter_warnings_ACTION()
     assert calls == [cli.WARN_ST]
+
+
+def test_theme_screen_opens_once_and_not_from_itself():
+    """``T`` opens the picker, and pressing it again must not stack another."""
+    calls = []
+    gw = SimpleNamespace(
+        ss=SimpleNamespace(is_curr=lambda _screen: False),
+        navigate_to=lambda screen: calls.append(screen),
+    )
+    screen = object.__new__(cli.GrubWizScreen)
+    screen.gw = gw
+
+    screen.theme_screen_ACTION()
+    assert calls == [cli.THEME_ST]
+
+    gw.ss = SimpleNamespace(is_curr=lambda screen: screen == cli.THEME_ST)
+    screen.theme_screen_ACTION()
+    assert calls == [cli.THEME_ST]
 
 
 def test_escape_only_navigates_back_when_a_stack_exists():

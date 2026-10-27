@@ -136,7 +136,8 @@ def test_restore_asks_under_the_selected_row_before_replacing_the_source():
 
     assert calls == []
     prompt, kwargs = screen.gw.asked[-1]
-    assert prompt == f'Restore GRUB source from {target.name}'
+    # Phrased as a question: the line has to read as awaiting an answer.
+    assert prompt == 'Restore GRUB source from .bak?'
     assert kwargs['scope'] == 'item'
     assert kwargs['item_key'] == target
 
@@ -162,7 +163,7 @@ def test_delete_asks_before_unlinking_the_selected_backup(tmp_path):
 
     assert doomed.exists()
     prompt, kwargs = gw.asked[-1]
-    assert prompt == f'Delete {doomed.name}'
+    assert prompt == 'Delete .bak?'
     assert kwargs['scope'] == 'item'
     assert kwargs['item_key'] == doomed
 

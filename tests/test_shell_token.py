@@ -175,7 +175,7 @@ def test_short_param_is_edited_inline_without_a_dialog(make_headless_win):
     assert gw.confirm_scope == 'item'
     assert gw.confirm_item_key == 'GRUB_EARLY_INITRD_LINUX_STOCK'
     assert (win.prompt_line.get_display_string()
-            == '⚠️ Edit value, then ENTER or ESC: │')
+            == '⚠️  Edit value, then ENTER or ESC: │')
     # What the value may be is always available on the dim line below.
     assert win.prompt_line.hint == 'pat=^.*$'
 
@@ -189,7 +189,7 @@ def test_inline_edit_seeds_the_value_being_replaced(make_headless_win):
     gw.edit_param(win, 'GRUB_DISTRIBUTOR', re.compile(r'^.*$'))
 
     assert (win.prompt_line.get_display_string()
-            == '⚠️ Edit value, then ENTER or ESC: Ubuntu│')
+            == '⚠️  Edit value, then ENTER or ESC: Ubuntu│')
 
 
 def test_inline_edit_escape_leaves_the_value_alone(make_headless_win):
@@ -221,10 +221,10 @@ def test_edit_param_retries_until_a_multi_word_value_is_quoted(make_headless_win
     assert gw.win.prompt_active is True
     # A refused answer only changes the wording; the hint line is unchanged,
     # and the refused text is still in the buffer, editable.
-    assert win.prompt_line.prompt == '⚠️ Re-edit value, then ENTER or ESC'
+    assert win.prompt_line.prompt == '⚠️  Re-edit value, then ENTER or ESC'
     assert win.prompt_line.hint == 'pat=^.*$'
     assert win.prompt_line.get_display_string() == (
-        f'⚠️ Re-edit value, then ENTER or ESC: {bad}│')
+        f'⚠️  Re-edit value, then ENTER or ESC: {bad}│')
     assert gw.param_values['GRUB_EARLY_INITRD_LINUX_STOCK'] == ''
 
     type_text(gw, good, clear=len(bad))
@@ -291,7 +291,7 @@ def test_expert_edit_allows_command_substitution_but_not_injection(
     press_enter(gw)
 
     assert gw.param_values['GRUB_CUSTOM'] == ''
-    assert win.prompt_line.prompt == '⚠️ Re-edit value, then ENTER or ESC'
+    assert win.prompt_line.prompt == '⚠️  Re-edit value, then ENTER or ESC'
 
     type_text(gw, '$(reboot)', clear=len('x; reboot'))
     press_enter(gw)

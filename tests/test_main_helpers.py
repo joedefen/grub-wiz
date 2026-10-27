@@ -205,12 +205,12 @@ def test_tag_prompt_is_an_item_line_seeded_with_the_current_tag(
     assert gw.request_backup_tag(chosen, seed='~Timeout+1') is True
 
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️ Edit tag, then ENTER or ESC: ~Timeout+1│')
+            == '⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│')
     assert gw.confirm_scope == 'item'
     assert gw.confirm_item_key == chosen
     # The prompt is drawn under the backup it renames, not in the header.
     gw.add_confirm_item_line(chosen)
-    assert gw.win.body.texts == ['⚠️ Edit tag, then ENTER or ESC: ~Timeout+1│']
+    assert gw.win.body.texts == ['⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│']
 
 
 def test_tag_answer_renames_the_backup_and_refreshes_the_list(
@@ -266,7 +266,7 @@ def test_invalid_tag_is_asked_again_with_the_rejected_text_editable(
 
     assert gw.win.prompt_active is True
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️ Invalid tag, then ENTER or ESC: bad-tag!│')
+            == '⚠️  Invalid tag, then ENTER or ESC: bad-tag!│')
     assert gw.refreshed == []
 
 

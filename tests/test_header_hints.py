@@ -8,6 +8,7 @@ alongside the other screens.
 
 from types import SimpleNamespace
 
+from grub_wiz.WarnDB import WarnDB
 from grub_wiz.main import (
     GrubWizScreen, HomeScreen, RestoreScreen, WarnScreen,
     HOME_ST, REVIEW_ST, RESTORE_ST, WARN_ST,
@@ -113,3 +114,67 @@ def test_warncfg_header_advertises_help_and_styles_escape():
     assert '?:help' in header
     assert 'ESC:back' in header
     assert 'ESC=back' not in header
+
+
+def make_review_head2_screen(picked, inhibits=()):
+    """Build a screen with just the collaborators add_common_head2() needs."""
+    captured = []
+    hidden = set(inhibits)
+    gw = SimpleNamespace(
+        ss=SimpleNamespace(is_curr=lambda screen: screen == REVIEW_ST),
+        get_enums_regex=lambda: ('', None, [], None, None),
+        win=SimpleNamespace(get_picked_context=lambda: picked),
+        param_name_wid=20,
+        show_hidden_params=True,
+        warn_db=SimpleNamespace(is_inhibit=lambda key: key in hidden),
+        add_fancy_header=captured.append,
+    )
+    screen = HomeScreen.__new__(HomeScreen)
+    screen.gw = gw
+    screen.win = SimpleNamespace(cols=80)
+    return screen, captured
+
+
+def test_review_header_offers_allow_warning_for_inhibited_warning_row():
+    """A suppressed warning must offer x:allow-warning, matching what x does."""
+    key = WarnDB.make_key('GRUB_TIMEOUT',
+                          'when 0, TIMEOUT_STYLE cannot be "hidden"')
+    picked = SimpleNamespace(genre='warn', warn_key=key)
+    screen, captured = make_review_head2_screen(picked, inhibits={key})
+
+    screen.add_common_head2('')
+
+    assert 'x:allow-warning' in captured[0]
+    assert 'x:inhibit-warning' not in captured[0]
+
+
+def test_review_header_offers_inhibit_warning_for_visible_warning_row():
+    """A shown warning must still offer x:inhibit-warning."""
+    key = WarnDB.make_key('GRUB_TIMEOUT',
+                          'when 0, TIMEOUT_STYLE cannot be "hidden"')
+    picked = SimpleNamespace(genre='warn', warn_key=key)
+    screen, captured = make_review_head2_screen(picked)
+
+    screen.add_common_head2('')
+
+    assert 'x:inhibit-warning' in captured[0]
+    assert 'x:allow-warning' not in captured[0]
+
+
+def test_review_w_hands_its_picked_context_to_the_warnings_screen():
+    """W from REVIEW must tell WARN which item it came from."""
+    context = SimpleNamespace(genre='param', param_name='GRUB_TIMEOUT')
+    handed_off = []
+    warn_screen = SimpleNamespace(set_entry_from_context=handed_off.append)
+    gw = SimpleNamespace(
+        ss=SimpleNamespace(is_curr=lambda screens: REVIEW_ST in screens),
+        win=SimpleNamespace(get_picked_context=lambda: context),
+        screens={WARN_ST: warn_screen},
+        navigate_to=lambda _screen: True,
+    )
+    screen = GrubWizScreen.__new__(GrubWizScreen)
+    screen.gw = gw
+
+    screen.enter_warnings_ACTION()
+
+    assert handed_off == [context]

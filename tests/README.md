@@ -22,6 +22,9 @@ tests/
 ├── test_sync_check.py                # /etc/default/grub vs generated grub.cfg mtimes
 ├── test_canned_config_loading.py     # Custom-config loading and fallbacks
 ├── test_warn_db_persistence.py       # Warning DB formats and write failures
+├── test_ui_prefs.py                  # Remembered theme: YAML boundary
+├── test_glyphs.py                    # Unicode/ASCII glyphs and terminal checks
+├── test_theme_picker.py              # Theme screen, persistence, help notes
 ├── test_main_helpers.py              # Helpers in main.py, on a headless window
 ├── test_cli_branches.py              # Reset/validation/demo and module CLIs
 ├── test_data/                        # Test GRUB configuration files
@@ -255,12 +258,42 @@ line are the production ones; only `answer()`/`flash()`, which poll a real
 keyboard, are replaced. A refused rename is asserted through
 `current_status`, because that is what keeps the backup list on screen.
 
+### `test_ui_prefs.py`
+
+Covers the `ui-prefs.yaml` boundary: a missing file is a normal first run, a
+set value survives into a new instance, an unchanged value does not rewrite the
+file, and corrupt YAML, a non-mapping document, a read error and a failed write
+all degrade to "works for this session" (the last one keeps the value in
+memory and reports it) instead of aborting start-up. `delete()` removes the file
+and treats a second delete as "nothing to do".
+
+### `test_glyphs.py`
+
+Pins the glyph table and the fallback: every entry has a plain-ASCII form, the
+Unicode set is the default, and `set_ascii()` swaps the meaningful ones
+consistently (`⚠️`→`(!)`, `✘`→`X`, `🟌`→`*`, `⮜–⮞`→`<->`). The font check
+always prints the real Unicode characters, even in ASCII mode, because that is
+what it checks. `terminal_report()` is covered for UTF-8 spellings, non-UTF-8
+encodings (which force ASCII), `TERM=dumb` (forces ASCII) and `TERM=linux`
+(warns without forcing — a console font's coverage cannot be observed).
+
+### `test_theme_picker.py`
+
+Covers the COLOR THEME screen built by `console_window.Theme`: it derives from
+`GrubWizScreen` (so ESC and `?` keep working there), `t` cycles to the next
+theme, wraps around, applies the theme to the live window and then calls
+`remember_theme()`. Also pins that the picker key is absent from the EDIT
+header but present on the help screen together with the font check,
+`--theme`/saved/default precedence, a stale saved theme degrading to the
+default, and that only a changed theme is written to `UiPrefs`.
+
 ### `test_cli_branches.py`
 
 Covers `--validate-custom-config`, `--factory-reset` (including partial
 failure), `--validator-demo`, the pre-curses ordering of the purge and the
-`BASELINE` record, `-k`/`--keep-all-bak` suppressing only the purge, and the
-`GrubCfgParser`/`DistroVars` module entry points.
+`BASELINE` record, `-k`/`--keep-all-bak` suppressing only the purge, the
+`--theme`/`--ascii` switches, and the `GrubCfgParser`/`DistroVars` module entry
+points.
 
 ## Test Data Files
 

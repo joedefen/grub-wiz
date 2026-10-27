@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # runner.py
-# Located in the top-level grub-pal directory
+# Located in the top-level grub-wiz directory
 
 import runpy
 

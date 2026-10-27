@@ -16,6 +16,8 @@ import curses as cs
 from pathlib import Path
 from types import SimpleNamespace
 
+from console_window.textwidth import string_width
+
 from grub_wiz.main import GrubWiz, RestoreScreen, ReviewScreen
 
 
@@ -27,13 +29,19 @@ def make_gw(win):
     return gw
 
 
-def test_prompt_is_rendered_as_a_single_header_line(headless_win):
+def test_prompt_is_rendered_as_a_single_centered_header_line(headless_win):
     gw = make_gw(headless_win)
 
     assert gw.begin_confirm('Delete backup') is True
     gw.add_confirm_header()
 
-    assert gw.win.head.texts == ['⚠️ Delete backup  [Press "y" or ESC]']
+    # Bracketed by the glyph at both ends, and centered: the leading pad is
+    # computed from display cells, so the two ⚠️ (four cells together) do not
+    # shift the line off centre.
+    display = '⚠️  Delete backup  ["y" or ESC]  ⚠️'
+    lead = (gw.win.get_pad_width() - string_width(display)) // 2
+    assert gw.win.head.texts == [' ' * lead + display]
+    assert lead > 0
 
 
 def test_the_header_prompt_is_bold(headless_win):
@@ -121,7 +129,7 @@ def test_callback_may_start_the_next_prompt(headless_win):
 
     assert gw.win.prompt_active is True
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️ Second  [Press "y" or ESC]')
+            == '⚠️  Second  ["y" or ESC]  ⚠️')
     assert gw.win.passthrough_mode is True
 
     gw.win.handle_prompt_key(ord('y'))
@@ -153,7 +161,7 @@ def test_item_hint_is_drawn_dim_below_the_prompt_line(headless_win):
     gw.add_confirm_item_line('GRUB_TIMEOUT')
 
     assert gw.win.body.texts == [
-        '⚠️ Edit value, then ENTER or ESC: 5│',
+        '⚠️  Edit value, then ENTER or ESC: 5│',
         '-1 for infinite, 0 or positive integer',
     ]
     # Detail lines, never pick targets: the row being edited stays selected.
@@ -186,7 +194,9 @@ def test_item_scope_draws_the_prompt_only_after_its_item(headless_win):
 
     gw.add_confirm_item_line('row-1')
 
-    assert gw.win.body.texts == ['⚠️ Delete backup  [Press "y" or ESC]']
+    # Item-scoped prompts are not centered: the line belongs to the row above
+    # it, so it stays left-aligned like that row's other detail lines.
+    assert gw.win.body.texts == ['⚠️  Delete backup  ["y" or ESC]  ⚠️']
 
 
 def test_item_prompt_disappears_once_it_is_answered(headless_win):
@@ -197,6 +207,35 @@ def test_item_prompt_disappears_once_it_is_answered(headless_win):
     gw.add_confirm_item_line('row-1')
 
     assert gw.win.body.texts == []
+
+
+def test_header_hints_dim_while_a_prompt_is_live():
+    """The hints stay on screen but stop competing with the live question."""
+    gw = object.__new__(GrubWiz)
+    captured = []
+    gw.win = SimpleNamespace(
+        prompt_active=True,
+        add_fancy_header=lambda line, mode=None, line_attr=None:
+            captured.append((line, line_attr)))
+    gw.spins = SimpleNamespace(fancy_headers='Underline')
+
+    gw.add_fancy_header('REVIEW  ?:help [q]uit')
+
+    assert captured == [('REVIEW  ?:help [q]uit', cs.A_DIM)]
+
+
+def test_header_hints_keep_their_style_when_no_prompt_is_live():
+    gw = object.__new__(GrubWiz)
+    captured = []
+    gw.win = SimpleNamespace(
+        prompt_active=False,
+        add_fancy_header=lambda line, mode=None, line_attr=None:
+            captured.append((line, line_attr)))
+    gw.spins = SimpleNamespace(fancy_headers='Underline')
+
+    gw.add_fancy_header('REVIEW  ?:help [q]uit')
+
+    assert captured == [('REVIEW  ?:help [q]uit', None)]
 
 
 def test_review_header_appends_the_live_confirmation_after_its_hints():

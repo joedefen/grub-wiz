@@ -25,7 +25,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
-                            InlineConfirmation, BasicTextScreen)
+                            InlineConfirmation, BasicTextScreen, Theme)
+from .Glyphs import Glyphs
+from .UiPrefs import UiPrefs
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -39,8 +41,9 @@ from .ParamDiscovery import ParamDiscovery
 from .UserConfigDir import UserConfigDir
 from .SyncCheck import run_sync_check
 
-HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
-SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
+HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST, THEME_ST = (
+    0, 1, 2, 3, 4, 5, 6, 7)
+SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP THEMES'.split() # screen names
 
 # Navigation keys this app reserves for its own actions, with the labels the
 # console-window navigation help should print for them.  Left/right cycle the
@@ -102,8 +105,14 @@ def display_width(text):
     return width
 
 
-def truncate_to_width(text, width, ellipsis='▶'):
-    """Truncate *text* so its terminal cell width does not exceed *width*."""
+def truncate_to_width(text, width, ellipsis=None):
+    """Truncate *text* so its terminal cell width does not exceed *width*.
+
+    *ellipsis* defaults to the active glyph set, so ``--ascii`` reaches this
+    marker too; passing it explicitly keeps existing call sites unchanged.
+    """
+    if ellipsis is None:
+        ellipsis = Glyphs.ellipsis()
     text = str(text)
     if display_width(text) <= width:
         return text
@@ -248,10 +257,31 @@ class GrubWizScreen(Screen):
         if self.gw.ss.is_curr(HOME_ST):
             self.gw.navigate_to(RESTORE_ST)
 
+    def theme_screen_ACTION(self):
+        """Open the COLOR THEME picker (``T``); a no-op when already on it."""
+        if not self.gw.ss.is_curr(THEME_ST):
+            self.gw.navigate_to(THEME_ST)
+
     def enter_warnings_ACTION(self):
-        """Handle W key - navigate to warnings screen (EDIT/REVIEW only)"""
-        if self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
-            self.gw.navigate_to(WARN_ST)
+        """Open WARNINGS-CONFIG, aimed at REVIEW's selected item.
+
+        REVIEW can have warnings for the selected parameter, with some of them
+        inhibited and therefore hidden.  Opening the warnings screen at its
+        first row would lose that context, so the selected REVIEW row is handed
+        to the warnings screen before it redraws.  On EDIT there is no warning
+        context to carry, and the screen opens normally.
+        """
+        if not self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
+            return
+        warn_screen = (getattr(self.gw, 'screens', None) or {}).get(WARN_ST)
+        context = None
+        win = getattr(self.gw, 'win', None)
+        if (warn_screen is not None
+                and self.gw.ss.is_curr((REVIEW_ST,))
+                and win is not None):
+            context = win.get_picked_context()
+        if self.gw.navigate_to(WARN_ST) and warn_screen is not None:
+            warn_screen.set_entry_from_context(context)
 
     # Body rows are not stable across redraws: the dropdown/detail rows are
     # emitted only under the selected parameter.  The window's ``pick_pos`` is
@@ -301,6 +331,10 @@ class GrubWizScreen(Screen):
                     break
         win.pick_pos = pos
 
+    def show_keys_ACTION(self):
+        """ Show last key for demo"""
+        self.app.win.set_demo_mode(enabled=None) # toggle it
+
 
 class HomeScreen(GrubWizScreen):
     """HOME screen - parameter editing"""
@@ -322,7 +356,7 @@ class HomeScreen(GrubWizScreen):
         tab = self.get_tab()
         marker = ' '
         if not gw.is_active_param(param_name):
-            marker = '✘'
+            marker = Glyphs.warn()
         value = gw.param_values[param_name]
         line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
         indent = len(line)
@@ -332,7 +366,8 @@ class HomeScreen(GrubWizScreen):
             line = textwrap.fill(line, width=wid,
                        subsequent_indent=' '*indent)
         elif display_width(line) > wid and not is_current:
-            line = truncate_to_width(line, self.win.cols-1, ellipsis='⯈')
+            line = truncate_to_width(line, self.win.cols-1,
+                                     ellipsis=Glyphs.ellipsis_tail())
         return line.splitlines()
 
 
@@ -411,7 +446,7 @@ class HomeScreen(GrubWizScreen):
                 if not selected:
                     line = param_lines[0]
                     if len(param_lines) > 1:
-                        line = line[:win.cols-2] + '⯈'
+                        line = line[:win.cols-2] + Glyphs.ellipsis_tail()
                     anchors[win.body.row_cnt] = ('param', param_name, 0)
                     win.add_body(line, context=Context(genre='param', param_name=param_name))
                     continue
@@ -477,14 +512,20 @@ class HomeScreen(GrubWizScreen):
         tab = self.get_tab()
         ctx = gw.win.get_picked_context()
         if ctx:
-            cat, ident = ctx.genre, getattr(ctx, 'param_name', '')
+            cat = ctx.genre
+            # Warning rows carry a composite warning key, parameter rows carry
+            # a parameter name.  Reading only param_name here made every warning
+            # look un-inhibited, so an already-suppressed warning still offered
+            # "inhibit-warning" while pressing x correctly allowed it.
+            ident = (getattr(ctx, 'warn_key', '') if cat == 'warn'
+                     else getattr(ctx, 'param_name', ''))
         else:
             cat, ident = '', ''
 
         middle =  ''
         if cat == 'param':
             if enums:
-                middle += '⮜–⮞'
+                middle += Glyphs.nav()
             # EXPERT_EDIT is truthy but is not a regex; only a real regex means
             # the value will be validated, which is what [e]dit promises.
             if has_edit_regex(regex):
@@ -623,7 +664,7 @@ class ReviewScreen(HomeScreen):
         header, cnt = '', gw.hidden_stats.warn
         if cnt:
             header = 's:hide' if gw.show_hidden_warns else '[s]how'
-            header += f' {cnt} ✘-warns'
+            header += f' {cnt} {Glyphs.warn()}-warns'
         header = f'{header:<24}'
         self.add_common_head2(header)
         # A confirmation that affects the whole program goes on its own header
@@ -713,10 +754,10 @@ class ReviewScreen(HomeScreen):
                 warn_key = WarnDB.make_key(param_name, hey[1])
                 is_inhibit = gw.warn_db.is_inhibit(warn_key)
                 gw.hidden_stats.warn += int(is_inhibit)
-                stars = '🟌' * len(hey[0])
+                stars = Glyphs.star() * len(hey[0])
 
                 if not is_inhibit or gw.show_hidden_warns:
-                    mark = '✘' if is_inhibit else ' '
+                    mark = Glyphs.warn() if is_inhibit else ' '
                     # Pad the star field by *cell* width (an emoji star is
                     # two cells), so the message starts at the same column
                     # for every severity.
@@ -862,7 +903,7 @@ class RestoreScreen(GrubWizScreen):
         for pair in gw.ordered_backup_pairs:
             checksum, bak_path = pair[0], pair[1]
             is_current = gw.backup_mgr.checksum_matches(checksum, gw.grub_checksum)
-            prefix = '●' if is_current else ' '
+            prefix = Glyphs.current() if is_current else ' '
             ref = 'CMP' if self.baseline_bak == bak_path else '   '
             self.bak_paths.append(bak_path)
             self.win.add_body(f'{prefix} {ref} {bak_path.name}',
@@ -908,7 +949,7 @@ class RestoreScreen(GrubWizScreen):
             return
         target = gw.ordered_backup_pairs[idx][1]
         gw.begin_confirm(
-            f'Restore GRUB source from {target.name}',
+            'Restore GRUB source from .bak?',
             on_confirm=lambda _answer: self.restore_chosen(target),
             scope='item', item_key=target)
 
@@ -966,7 +1007,7 @@ class RestoreScreen(GrubWizScreen):
         if 0 <= idx < len(gw.ordered_backup_pairs):
             doomed = gw.ordered_backup_pairs[idx][1]
             gw.begin_confirm(
-                f'Delete {doomed.name}',
+                'Delete .bak?',
                 on_confirm=lambda _answer: self.delete_chosen(doomed),
                 scope='item', item_key=doomed)
 
@@ -1174,6 +1215,28 @@ class WarnScreen(GrubWizScreen):
         super().__init__(grub_wiz)
         self.search = ''
         self.regex = None  # compiled
+        self._entry_param = None
+        self._entry_warn_key = None
+
+    def set_entry_from_context(self, context):
+        """Remember the REVIEW row that W came from for the next draw.
+
+        A selected warning row has one exact target.  A selected parameter row
+        asks for the first warning under that parameter that is still shown,
+        or the first inhibited one when every warning for it is hidden.
+        """
+        self._entry_param = None
+        self._entry_warn_key = None
+        if context is None:
+            return
+        genre = getattr(context, 'genre', '')
+        if genre == 'warn':
+            warn_key = getattr(context, 'warn_key', None)
+            if warn_key:
+                self._entry_warn_key = warn_key
+                self._entry_param = warn_key.split(': ', 1)[0]
+        elif genre == 'param':
+            self._entry_param = getattr(context, 'param_name', None)
 
     def on_pop(self):
         """Save any changes when screen is removed"""
@@ -1207,6 +1270,7 @@ class WarnScreen(GrubWizScreen):
         line += '   ESC:back [q]uit'
         gw.add_fancy_header(line)
 
+
     def refresh_warn_info(self):
         """ Recompute warning metadata from the live parameter values.
 
@@ -1216,23 +1280,45 @@ class WarnScreen(GrubWizScreen):
             HOME without passing through REVIEW, so the audit runs on every
             draw instead of once per session.  It is idempotent and only
             marks the database dirty when something actually changed.
+
+            Returns the current per-parameter warnings as well, so the entry
+            target can be resolved against warnings REVIEW is actually showing
+            rather than every possible warning in ``all_info``.
         """
         gw = self.gw
-        _warns, all_warn_info = gw.wiz_validator.make_warns(gw.param_values)
+        warns, all_warn_info = gw.wiz_validator.make_warns(gw.param_values)
         gw.warn_db.audit_info(all_warn_info)
+        return warns
 
     def draw_body(self):
-        """List every known warning, filtered by the search regex."""
+        """List every known warning, filtered by the search regex.
+
+        When W was pressed on REVIEW, the first draw aims the pick at that
+        item's warnings: the exact selected warning when one was selected,
+        otherwise the first current warning for the parameter that is still
+        shown, falling back to its first inhibited warning.  The target is
+        consumed here so later redraws do not keep moving the pick.
+        """
         gw = self.gw
-        self.refresh_warn_info()
+        warns = self.refresh_warn_info()
         db = gw.warn_db
         all_info = db.all_info
         keys = sorted(all_info.keys())
         prev_param = None
+        entry_param = self._entry_param
+        entry_warn_key = self._entry_warn_key
+        self._entry_param = self._entry_warn_key = None
+        current_keys = set()
+        if entry_param:
+            for _stars, message in warns.get(entry_param, []):
+                current_keys.add(WarnDB.make_key(entry_param, message))
+        rows_by_key = {}
+        first_shown = first_hidden = None
+        row = 0
 
         for key in keys:
             sev = all_info[key]
-            stars = '🟍' * sev
+            stars = Glyphs.sev_star() * sev
 
             inh = 'X' if db.is_inhibit(key) else ' '
 
@@ -1259,9 +1345,25 @@ class WarnScreen(GrubWizScreen):
 
             # Search against full_line, but display line
             if not self.regex or self.regex.search(full_line):
+                if entry_param and key in current_keys:
+                    if db.is_inhibit(key):
+                        if first_hidden is None:
+                            first_hidden = row
+                    elif first_shown is None:
+                        first_shown = row
+                rows_by_key[key] = row
                 self.win.add_body(line, context=Context(genre='warn', warn_key=key))
                 # Only update prev_param for lines that are actually displayed
                 prev_param = param_name
+                row += 1
+
+        target_row = rows_by_key.get(entry_warn_key) if entry_warn_key else None
+        if target_row is None:
+            target_row = (first_shown if first_shown is not None
+                          else first_hidden)
+        if target_row is not None:
+            self.win.pick_pos = target_row
+
 
     def hide_ACTION(self):
         """Toggle suppression of the selected warning."""
@@ -1279,14 +1381,75 @@ class WarnScreen(GrubWizScreen):
         self.gw.search_bar.start(self.search)
         self.gw.win.passthrough_mode = True
 
+# The theme picker is built by console-window: it draws the swatches and knows
+# how to apply a theme to the live window, so this app only has to say which
+# key cycles it and to remember the result.  Deriving it from GrubWizScreen
+# (rather than from Screen) keeps the app-level action set, so ESC and ? still
+# work on that screen.
+ThemePickerScreen = Theme.create_picker_screen(GrubWizScreen)
+
+
+class ThemeScreen(ThemePickerScreen):
+    """COLOR THEME screen: ``t`` cycles the themes, ``ESC`` returns."""
+
+    def draw_screen(self):
+        """Draw the picker swatches plus a dim note about persistence."""
+        super().draw_screen()
+        self.win.add_body('The choice is remembered for the next start.',
+                          attr=cs.A_DIM)
+
+    def spin_theme_ACTION(self):
+        """Cycle to the next theme, then remember the one now on screen."""
+        super().spin_theme_ACTION()
+        self.gw.remember_theme()
+
+
 class HelpScreen(GrubWizScreen):
     """HELP screen"""
+
+    def extra_help_paragraphs(self):
+        """Non-binding help: the theme picker and the font check.
+
+        Neither belongs in a header: a header is already the scarcest line on
+        screen, and both notes are only interesting when something looks wrong
+        (a theme whose colors are unreadable, or a font without the glyphs).
+        The glyph check has to show the real characters -- nothing inside the
+        process can tell whether the *font* draws them.
+        """
+        theme = (
+            'Color theme: press T for the theme picker, then t to cycle the '
+            'themes (ESC returns).  The default follows your terminal colors. '
+            'If warnings, stars or highlights are hard to read, pick another '
+            'theme; the choice is remembered for the next start.')
+        glyphs = Glyphs.probe_text()
+        if Glyphs.is_ascii():
+            font = (
+                f'Font check: ASCII symbols are in use (--ascii).  To try the '
+                f'Unicode set, restart without --ascii and look for: {glyphs}')
+        else:
+            font = (
+                f'Font check: grub-wiz draws {glyphs}.  If any of these shows '
+                'as a box or is blank, the font cannot draw it: restart with '
+                '"grub-wiz --ascii" to use plain ASCII symbols instead.')
+        return [theme, font]
+
+    def draw_notes(self):
+        """Draw the extra help paragraphs, wrapped to the window width."""
+        win = self.win
+        # A few cells of slack: textwrap counts code points, while the emoji
+        # glyphs in the check line take two terminal cells each.
+        width = max(win.cols - 8, 20)
+        for paragraph in self.extra_help_paragraphs():
+            for line in textwrap.wrap(paragraph, width=width):
+                win.add_body(line, attr=cs.A_DIM)
+
     def draw_screen(self):
         """Draw navigation-key and body help for the current screen."""
         gw, win = self.gw, self.win
         self.win.set_pick_mode(False)
         gw.spinner.show_help_nav_keys(win)
         gw.spinner.show_help_body(win)
+        self.draw_notes()
 
 
 # --- Shell-value validation for /etc/default/grub --------------------------
@@ -1484,6 +1647,11 @@ class GrubWiz:
         self.clues = []
         self.next_prompt_seconds = [3.0]
         self.ss = None
+        # Interface preferences are user state, read before the window exists so
+        # the saved theme is the one the window starts with.  ``--theme`` wins
+        # for this run without overwriting what the user remembered.
+        self.prefs = UiPrefs()
+        self.theme_name = self._initial_theme(cli_opts)
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
@@ -1496,6 +1664,30 @@ class GrubWiz:
         # draw rather than being taught what a row is; see begin_confirm().
         self.confirm_scope, self.confirm_item_key = 'header', None
         self.reinit_gw()
+
+    def _initial_theme(self, cli_opts):
+        """The theme to start with: ``--theme``, else the remembered choice.
+
+        ``Theme.resolve`` also validates a stale name (a theme removed from
+        console-window, or a hand-edited preference), so an unusable value
+        degrades to the terminal-default theme instead of failing to draw.
+        """
+        requested = getattr(cli_opts, 'theme', None) if cli_opts else None
+        return Theme.resolve(requested or self.prefs.get('theme'))
+
+    def remember_theme(self):
+        """Persist the theme the window is actually drawing with.
+
+        ``win.theme`` is authoritative: curses installs one palette per
+        terminal, and the window records the name it resolved, so a preference
+        stored from anything else could disagree with what the user just saw.
+        """
+        name = Theme.resolve(getattr(self.win, 'theme', None))
+        if name == self.theme_name:
+            return name
+        self.theme_name = name
+        self.prefs.set('theme', name)
+        return name
 
     ####################################################################
     # Inline (non-modal) confirmations
@@ -1512,8 +1704,33 @@ class GrubWiz:
 
     #: Marks a confirmation as a question rather than content.  It stays in the
     #: app's own text: the library keeps a caller's wording verbatim so that
-    #: decorations remain application policy.
+    #: decorations remain application policy.  The value is the documented
+    #: Unicode marker; ``confirm_glyph()`` is what callers actually draw, so
+    #: ``--ascii`` can substitute a marker the font certainly has.
     CONFIRM_GLYPH = '⚠️'
+
+    #: Gap either side of the glyph, and it is deliberately two cells.  An
+    #: emoji-presentation glyph is two cells wide but one character, so a single
+    #: space reads as "cramped" against its density, and on terminals whose
+    #: cursor advance for the pair disagrees with how they draw it the following
+    #: space is simply absorbed.  Two spaces keep a visible gap either way.
+    CONFIRM_GAP = '  '
+
+    @staticmethod
+    def confirm_glyph():
+        """The active question marker (Unicode, or ASCII under ``--ascii``)."""
+        return Glyphs.alert()
+
+    @classmethod
+    def confirm_answer_hint(cls, mode):
+        """Trailing answer hint for the one-key confirmations.
+
+        Shorter than the library's ``[Press "y" or ESC]`` so the whole line
+        stays on one row, and closed by the same glyph so the question is
+        bracketed at both ends: the eye finds the ends of the band before it
+        reads the middle.
+        """
+        return cls.CONFIRM_GAP.join((f'["{mode}" or ESC]', Glyphs.alert()))
 
     def begin_confirm(self, prompt, *, on_confirm=None, on_cancel=None,
                       mode='y', seed='', scope='header', item_key=None,
@@ -1525,19 +1742,24 @@ class GrubWiz:
         picked row identified by *item_key*.  *hint* is optional text drawn dim
         on the line below an item-scoped prompt: what the value may be, so the
         prompt itself stays short.
+
+        Callers phrase *prompt* as a question (``'Delete .bak?'``): the line
+        has to read as something awaiting an answer, not as a status message.
         """
         if self.win is None:
             return False
         self.confirm_scope, self.confirm_item_key = scope, item_key
-        return self.win.begin_prompt(f'{self.CONFIRM_GLYPH} {prompt}',
-                                     hint=hint, mode=mode, seed=seed,
-                                     on_confirm=on_confirm,
-                                     on_cancel=on_cancel)
+        return self.win.begin_prompt(
+            f'{self.confirm_glyph()}{self.CONFIRM_GAP}{prompt}',
+            hint=hint, mode=mode, seed=seed,
+            on_confirm=on_confirm,
+            on_cancel=on_cancel,
+            answer_hint=self.confirm_answer_hint(mode))
 
     def begin_commit_confirm(self, tag=None):
         """Ask inline, then commit; the action applies to the whole program."""
         return self.begin_confirm(
-            'Commit changes and update GRUB',
+            'Commit changes and update GRUB?',
             on_confirm=lambda _answer: self.update_grub(tag=tag, confirmed=True),
             scope='header')
 
@@ -1670,10 +1892,17 @@ class GrubWiz:
             answer_show_redraws=self.cli_opts.answer_timeout_debug,
             min_cols_rows=(70, 10),  # Allow smaller terminals (down from default 20 rows)
             taken_nav_keys=TAKEN_NAV_KEYS,
+            # Seed the window with the remembered (or --theme) choice; the
+            # theme picker changes it later through win.set_theme().
+            theme=self.theme_name,
         )
 
         # Create ConsoleWindow first (needed by screen objects)
         self.win = ConsoleWindow(win_opts)
+        # The divider is chrome: while an inline prompt is live it dims with the
+        # header hints, so the prompt band is the only full-intensity thing on
+        # screen.  The window decides when; this is the app's choice of how.
+        self.win.prompt_separator_attr = cs.A_DIM
 
         # Check terminal size at startup and wait for resize if too small
         import curses
@@ -1712,6 +1941,7 @@ class GrubWiz:
             COMPARE_ST: CompareScreen(self),
             WARN_ST: WarnScreen(self),
             HELP_ST: HelpScreen(self),
+            THEME_ST: ThemeScreen(self),
         }
         self.ss = ScreenStack(self.win, None, SCREENS, self.screens)
 
@@ -1762,6 +1992,15 @@ class GrubWiz:
         # Add ENTER to handled keys so it passes through during search (no visible menu item)
         # This is needed for the inline search prompt to receive ENTER in passthrough mode
         spinner.add_key('_search_enter', '', keys=[10, 13])
+        spinner.add_key('show_keys', 'K - show keys (demo mode)', genre='action')
+
+        # Theme selection.  The picker key is deliberately absent from every
+        # header hint: it is a preference, not a step in editing, so it is
+        # advertised only where keys are listed (the HELP screen).  ``T`` opens
+        # the picker from anywhere; ``t`` cycles themes while it is open, which
+        # is also the key the picker's own header advertises.
+        spinner.add_key('theme_screen', 'T - color theme picker', genre='action')
+        spinner.add_key('spin_theme', 't - cycle color theme', genre='action')
 
         # Create the inline search prompt for WarnScreen filtering
         def on_search_change(text):
@@ -1916,20 +2155,29 @@ class GrubWiz:
         """
         Wrapper that calls ConsoleWindow.add_fancy_header() with the current mode.
         Gets the mode from self.spins.fancy_headers and delegates to the window.
+
+        While an inline prompt is live every key is routed to that prompt, so
+        the header's own hints can no longer be acted on.  They are drawn dim
+        to say so, which also leaves the prompt (the one full-intensity line in
+        the band) as the only thing that reads at a glance.  The window owns
+        that rule for the separator; here it is one attribute on the way past,
+        so every screen inherits it without repeating the condition.
         """
         mode = self.spins.fancy_headers
-        self.win.add_fancy_header(line, mode=mode)
+        line_attr = cs.A_DIM if self.win is not None and self.win.prompt_active else None
+        self.win.add_fancy_header(line, mode=mode, line_attr=line_attr)
 
     def add_confirm_header(self):
         """Draw a program/screen-scoped confirmation as the last header line.
 
         ``add_prompt_header`` rather than ``add_fancy_header``: the bracketed
         key hint is literal text here, not the ``[x]`` markup the fancy parser
-        would consume.
+        would consume.  Centered, so the question sits in the middle of the
+        band instead of hugging the left edge among the (now dim) hints.
         """
         if self.win is None or self.confirm_scope != 'header':
             return
-        self.win.add_prompt_header(attr=cs.A_BOLD)
+        self.win.add_prompt_header(attr=cs.A_BOLD, align='center')
 
     def add_confirm_item_line(self, item_key):
         """Draw an item-scoped confirmation directly below that item.
@@ -2038,7 +2286,7 @@ class GrubWiz:
             value = self.param_values[param_name]
             edit = ' or [e]dit' if has_edit_regex(cfg['edit_re']) else ''
             # wrapped = f': 🡄 🡆 {edit}:\n'
-            wrapped = f': ⮜–⮞ {edit}:\n'
+            wrapped = f': {Glyphs.nav()} {edit}:\n'
             for enum, descr in cfg['enums'].items():
                 star = ' ⯀ ' if str(enum) == str(value) else ' 🞏 '
                 line = f' {star}{enum}: {descr}\n'
@@ -2446,7 +2694,8 @@ class GrubWiz:
             if needs_rebuild:
                 # Format category name for display
                 category_display = category.replace('_', ' ').title()
-                print(f"\n⚠️  {category_display} changes detected ('{trigger}').")
+                print(f"\n{Glyphs.alert()}  {category_display} changes "
+                      f"detected ('{trigger}').")
                 print("Rebuilding initramfs ensures driver/module changes take effect at early boot.")
 
                 # Check disk space before prompting
@@ -2455,12 +2704,13 @@ class GrubWiz:
 
                 # Determine if we should proceed
                 if space_info['is_critical']:
-                    print("\n🛑 CRITICAL: Insufficient disk space!")
+                    print(f"\n{Glyphs.stop()} CRITICAL: Insufficient disk space!")
                     print("   Initramfs rebuild would likely FAIL and may brick your system.")
                     print("   Please free up space in /boot first.")
                     print("\nSkipping initramfs rebuild for safety.")
                 elif not space_info['is_sufficient']:
-                    print("\n⚠️  Space is tight. Proceeding is risky but may work.")
+                    print(f"\n{Glyphs.alert()}  Space is tight. "
+                          "Proceeding is risky but may work.")
                     choice = prompt_line(
                         'Continue with rebuild anyway? [y/N]: ').strip().lower()
                     if choice != 'y':
@@ -2469,9 +2719,9 @@ class GrubWiz:
                     else:
                         initramfs_ok, initramfs_msg = self.grub_writer.run_initramfs_update()
                         if initramfs_ok:
-                            print('\n✓ Initramfs rebuilt successfully')
+                            print(f'\n{Glyphs.ok()} Initramfs rebuilt successfully')
                         else:
-                            print(f'\n✗ Initramfs rebuild failed:\n{initramfs_msg}')
+                            print(f'\n{Glyphs.fail()} Initramfs rebuild failed:\n{initramfs_msg}')
                             print('Your GRUB changes are applied, but initramfs was not rebuilt.')
                 else:
                     # Sufficient space, normal prompt
@@ -2480,9 +2730,9 @@ class GrubWiz:
                     if choice == 'y':
                         initramfs_ok, initramfs_msg = self.grub_writer.run_initramfs_update()
                         if initramfs_ok:
-                            print('\n✓ Initramfs rebuilt successfully')
+                            print(f'\n{Glyphs.ok()} Initramfs rebuilt successfully')
                         else:
-                            print(f'\n✗ Initramfs rebuild failed:\n{initramfs_msg}')
+                            print(f'\n{Glyphs.fail()} Initramfs rebuild failed:\n{initramfs_msg}')
                             print('Your GRUB changes are applied, but initramfs was not rebuilt.')
                             print('You may need to rebuild it manually later.')
                     else:
@@ -2515,6 +2765,7 @@ class GrubWiz:
             sys.exit(0)  # Won't reach here, but just in case
         # Otherwise continue to grub-wiz
         else:
+            time.sleep(1.5) # show start up messages breifly
             self.win.start_curses()
             if ok:
                 self.reinit_gw()
@@ -2688,6 +2939,27 @@ def rerun_module_as_root(module_name):
         os.execvp('sudo', vp)
 
 
+def apply_glyph_policy(force_ascii=False):
+    """Choose the symbol set once, before curses takes the terminal.
+
+    Only the terminal's *encoding* is detectable; whether its font has a glyph
+    for a code point is not (see ``grub_wiz/Glyphs.py``).  So this prints the
+    real glyphs as a check the user can look at, and switches to ASCII only
+    when the terminal provably cannot carry them -- or when ``--ascii`` says so.
+
+    Returns True when the ASCII set is in use.
+    """
+    if force_ascii:
+        Glyphs.set_ascii(True)
+        print('grub-wiz: using ASCII symbols (--ascii)')
+        return True
+    report = Glyphs.terminal_report()
+    Glyphs.set_ascii(report.ascii_required)
+    for note in report.notes:
+        print(f'grub-wiz: {note}')
+    return report.ascii_required
+
+
 def main():
     """Parse CLI options and start the TUI or the requested diagnostic mode."""
     rerun_module_as_root('grub_wiz.main')
@@ -2705,6 +2977,12 @@ def main():
                         help='for test only: enables screen redraw indicator')
     parser.add_argument('-k', '--keep-all-bak', action='store_true',
                         help='keep every backup; skip the start-up purge')
+    parser.add_argument('--theme', default=None, choices=Theme.list_all(),
+                        help='color theme for this run (otherwise the remembered '
+                             'choice; the default follows your terminal colors)')
+    parser.add_argument('--ascii', action='store_true',
+                        help='use plain ASCII symbols instead of Unicode glyphs '
+                             '(for fonts that show boxes)')
     opts = parser.parse_args()
 
     wiz = GrubWiz(cli_opts=opts)
@@ -2736,10 +3014,16 @@ def main():
         deleted = []
         try:
             for target in (wiz.param_discovery.cache_file,
-                            wiz.warn_db.yaml_path):
+                           wiz.warn_db.yaml_path):
                 if os.path.isfile(target):
                     os.unlink(target)
                     deleted.append(str(target))
+            # The remembered theme has its own owner, which also clears its
+            # in-memory copy.  The CLI tests replace GrubWiz with a minimal
+            # stand-in, so look for its preferences defensively.
+            prefs = getattr(wiz, 'prefs', None)
+            if prefs is not None and prefs.delete():
+                deleted.append(str(prefs.yaml_path))
             if deleted:
                 print(f'Deleted: {", ".join(deleted)}')
             else:
@@ -2748,6 +3032,11 @@ def main():
         except OSError as whynot:
             print(f'ERR: failed "factory reset" [{whynot}]')
         sys.exit(0)
+
+    # Decide the symbol set while the terminal is still a normal terminal: the
+    # check has to print the glyphs themselves, and it must be settled before
+    # curses draws a single row.
+    apply_glyph_policy(opts.ascii)
 
     # The defaults file is only "installed" once update-grub has regenerated
     # grub.cfg from it.  Ask before the screens open when the menu is older,

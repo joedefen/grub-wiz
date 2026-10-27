@@ -1,4 +1,3 @@
->  **Note: This is version 0.8.y - please report issues at https://github.com/joedefen/grub-wiz/issues**
 
 ## GrubWiz: Safe GRUB Configuration Made Simple
 
@@ -13,12 +12,13 @@
   -   **Smart initramfs rebuild**: Detects driver/kernel changes and offers to rebuild initramfs with disk space validation
 
 * **Key Features**
-  -   *Smart editing*: Preset choices for common values, regex validation for free-form entries
+  -   *Smart editing*: Preset choices for common values, regex validation for free-form entries [V2 adds inline editing for most fields]
   -   *Context-aware warnings*: Cross-parameter validation and sensible defaults
   -   *Automatic initramfs rebuild*: Detects driver/kernel changes that need initramfs updates, validates disk space, and offers safe rebuild across all major distros
-  -   *Full backup system*: Tagged, timestamped backups with easy restore and comparison, pruned automatically to the newest 24
+  -   *Full backup system*: Tagged, timestamped backups with easy restore and comparison, pruned automatically to the newest 24 [V2 improved backup]
   -   *Lightweight TUI*: Works everywhere—local, SSH, or minimal environments
   -   *Respects existing config*: Unknown parameters are preserved with minimal validation
+  -   *Readable on any screen*: Seven color themes (`T` opens the picker, `t` cycles them, and the choice is remembered) plus `--ascii`, which swaps the Unicode symbols for plain ASCII when a font cannot draw them [V2 addition].
 
 * **How It Works**
   -   Back up first: on startup, GRUB's current defaults are backed up (tagged and checksummed) if they are unique
@@ -28,6 +28,7 @@
   -   Restore if needed: version history with diff comparison
 
 `grub-wiz` focuses on the 95% of common GRUB configuration tasks, making them safe and simple while preserving your existing customizations.
+*  Report issues at https://github.com/joedefen/grub-wiz/issues
 
 #### Installation and Running is Easy
 
@@ -37,6 +38,7 @@
 * **Getting Help**:
   * In the app: Press `?` to view navigation keys and other key assignments
   * From terminal: Run `grub-wiz --help` to see command-line options
+  * If the screen is hard to read: press `T` to try another color theme, and look at the "font check" line on the help screen — if any symbol is a box, restart with `grub-wiz --ascii`
 
 >⚠️ **Distro-Specific Caveats**: Linux distributions often layer their opinions atop of the standard GRUB configuration. While `grub-wiz` ensures your `/etc/default/grub` is valid and safe, distros may ignore your settings (e.g., in pursuit of "Hidden Menu" or "Flicker-free" features).
 >* **Fedora Users**: Fedora uses an environment block (`grubenv`) that can override your timeout settings. If your menu is still hidden after using `grub-wiz`, you may need to run: `sudo grub2-editenv - unset menu_auto_hide`
@@ -64,7 +66,7 @@ Running `grub-wiz` brings a screen similar to:
 NOTES:
 * `grub-wiz` is only showing "active" parameters (the uncommented ones in the grub file); to add parameters, see them all with the `s` key. The parameters that are inactive will be marked with an `✘`.
 * In the header, `⮜–⮞` indicates you can cycle through a list of values with the right/left arrow keys.
-* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform. The value is typed on a line right under that parameter — `⚠️ Edit value, then ENTER or ESC: 5│` — so the old value stays on screen while you edit it (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). A dim line below says what the value may be (`-1 for infinite, 0 or positive integer`), so the prompt itself stays short; an answer that fails the check leaves the text in place with the prompt changed to `⚠️ Re-edit value, then ENTER or ESC`. `E` runs the same editor in expert mode, with minimal checks. Only the few long parameters (`GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, …) still open a full-screen dialog, because several rows of text do not fit on one line.
+* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform. The value is typed on a line right under that parameter — `⚠️  Edit value, then ENTER or ESC: 5│` — so the old value stays on screen while you edit it (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). A dim line below says what the value may be (`-1 for infinite, 0 or positive integer`), so the prompt itself stays short; an answer that fails the check leaves the text in place with the prompt changed to `⚠️  Re-edit value, then ENTER or ESC`. `E` runs the same editor in expert mode, with minimal checks. Only the few long parameters (`GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, …) still open a full-screen dialog, because several rows of text do not fit on one line.
 * When you done editing, then type `w` to write the parameter after you **review** them.
 * Edits are held in memory until you write them, so leaving with `q` **or Ctrl-C** asks before discarding them (on the RESTORE screen either key just goes back one screen).
 * For editing the `CMDLINE` parameters, see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
@@ -96,7 +98,7 @@ NOTES:
 * Warnings are be dismissed by fixing the values or by inhibiting the warning (with the `x` key).
 * If you inhibit warnings, they remain suppressed in future sessions until allowed.
 * Lines on this screen and others that end with `▶` are truncated. To see the rest of the text, visit that line.
-* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`.  The confirmation appears inline as a header line (`⚠️ Commit changes and update GRUB  [Press "y" or ESC]`), so the review stays visible: press `y` to commit, or `ESC` to cancel. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
+* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`.  The confirmation appears inline as a centered header line (`⚠️  Commit changes and update GRUB?  ["y" or ESC]  ⚠️`), so the review stays visible: press `y` to commit, or `ESC` to cancel. While the question is live, the other header hints and the divider are dimmed — nothing else can be acted on at that moment, so the question is the only line that reads at a glance. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
 
 **Automatic Initramfs Rebuild Detection** (Major Safety Feature)
 
@@ -162,12 +164,12 @@ When you enter the restore screen by typing `R` from the EDIT screen, it looks s
  RESTORE [r]estore [d]el [t]ag [v]iew [c]mp [b]aseline    ESC:back ?:help [q]uit
 ───────────────────────────────────────────────────────────────────────────────────
 >●     20261025-083036-s559DCA.~Timeout+1.bak
-        ⚠️ Edit tag, then ENTER or ESC: ~Timeout+1│
+        ⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│
        20261025-074512-s559DCA.BASELINE.bak
        20261024-221007-s0A91E4.~Theme.bak
    CMP 20261024-190231-s0A91E4.RESYNC.bak
 ```
-The second line is what pressing `t` looks like: the prompt is drawn under the row being renamed, seeded with the current tag and edited in place (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). `[r]estore` and `[d]el` use the same place, asking one-key questions there instead of replacing the screen with a dialog: `⚠️ Restore GRUB source from …  [Press "y" or ESC]` and `⚠️ Delete …  [Press "y" or ESC]`. Nothing is written or removed until `y` is pressed, and `ESC` leaves the backup untouched.
+The second line is what pressing `t` looks like: the prompt is drawn under the row being renamed, seeded with the current tag and edited in place (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). `[r]estore` and `[d]el` use the same place, asking one-key questions there instead of replacing the screen with a dialog: `⚠️  Restore GRUB source from .bak?  ["y" or ESC]  ⚠️` and `⚠️  Delete .bak?  ["y" or ESC]  ⚠️`. Nothing is written or removed until `y` is pressed, and `ESC` leaves the backup untouched.
 
 *Backup and restore features*:
  - the leading `●` indicates it is the backup for the current session.
@@ -215,6 +217,22 @@ Finally, we show the Warnings Configuration Screen.  Here is a short snippet:
 ```
 Every possible warning (currently about 50) is shown on the Warning Configuration Screen. You can inhibit and allow warnings as you please. More often, you probably will inhibit/allow warnings on the Review Screen as they arise and you wish to dismiss it.
 
+##### COLOR THEMES AND SYMBOLS
+Press `T` from any screen to open the COLOR THEME picker, then `t` to cycle through the palettes (`default`, `dark-mono`, `light-mono`, `solarized-dark`, `solarized-light`, `gruvbox`, `nord`) while the labelled swatches change live. `ESC` returns to where you were.
+
+The picker's key is deliberately kept out of the header lines — headers are for the steps you take while editing — so the help screen (`?`) is where you look it up.
+
+* The `default` theme follows your terminal's own colors. If warnings, stars or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
+* `--theme NAME` picks a theme for one run without changing the remembered choice.
+
+The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). No program can tell whether the *font* in use actually has those glyphs, so grub-wiz:
+
+1. checks what it can — a non-UTF-8 terminal or `TERM=dumb` switches to the ASCII symbols by itself and says so;
+2. prints a "font check" line containing the real characters at start-up, and repeats it on the help screen, so you can look at them (or copy the line into a shell);
+3. replaces every symbol with a plain-ASCII equivalent (`<->`, `X`, `*`, `(!)`, …) when you restart with `grub-wiz --ascii`.
+
+If the symbol line looks right, there is nothing to do. If any symbol is a box or blank, use `--ascii`.
+
 ---
 #### Files, State, and Residue
 
@@ -226,6 +244,7 @@ Every possible warning (currently about 50) is shown on the Warning Configuratio
 |---|---|---|
 | `*.bak` | Backups of `/etc/default/grub` (tag optional, newest 24 kept) | Yes (loses restore/compare history) |
 | `warn-db.yaml` | Inhibited/allowed warnings and severities | Yes (resets warning preferences) |
+| `ui-prefs.yaml` | Remembered color theme (`T` picker) | Yes (returns to the `default` theme) |
 | `custom_config.yaml` | Your optional custom parameter definitions | Keep |
 | `canned_config.yaml` | Reference template for the custom-config workflow | Yes (recreated on the next start) |
 
@@ -243,7 +262,7 @@ Notes:
 - `sudo` is required to inspect or remove the root-owned system state.
 - Writes into `~/.config/grub-wiz` are atomic and never follow symlinks. The commit candidate is staged next to `/etc/default/grub` so the final rename is atomic, and it is removed whether the commit succeeds or fails.
 - Nothing is written to `/tmp`; no lock or cache files are left behind.
-- `grub-wiz --factory-reset` deletes the discovery cache and the warning database, but preserves `*.bak` backups.
+- `grub-wiz --factory-reset` deletes the discovery cache, the warning database and the remembered theme choice, but preserves `*.bak` backups.
 - Start-up pruning keeps at most 24 backups and always keeps the oldest; `grub-wiz -k` skips it for that launch.
 - Restoring a backup is refused if it is a symlink, contains NUL bytes, or contains shell command substitution (a backtick or `$(`). This prevents a crafted backup from executing as root when the distro sources `/etc/default/grub`.
 
