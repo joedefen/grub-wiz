@@ -3,6 +3,8 @@
 
 `grub-wiz` is a terminal-based editor that helps you manage /etc/default/grub safely and efficiently, replacing error-prone manual editing with guided configuration.
 
+[![grub-wiz demo: editing TIMEOUT, reviewing warnings, writing GRUB, then comparing and restoring a backup](https://raw.githubusercontent.com/joedefen/grub-wiz/main/demo/dwipe-2026-02-05.07-58.gif)](https://github.com/joedefen/grub-wiz/blob/main/demo/dwipe-2026-02-05.07-58.gif)
+
 **The Problem It Solves.** Editing GRUB configurations manually is risky—typos can break your bootloader, and GUI tools often make overly aggressive changes. `grub-wiz` provides a middle ground: the power of direct editing with the safety of validation and guidance.
 
 * **Safety by Design**
@@ -29,12 +31,6 @@
 
 `grub-wiz` focuses on the 95% of common GRUB configuration tasks, making them safe and simple while preserving your existing customizations.
 *  Report issues at https://github.com/joedefen/grub-wiz/issues
-
-#### See It in Action
-
-[![grub-wiz demo: editing TIMEOUT, reviewing warnings, writing GRUB, then comparing and restoring a backup](https://raw.githubusercontent.com/joedefen/grub-wiz/main/demo/dwipe-2026-02-05.07-58.gif)](https://github.com/joedefen/grub-wiz/blob/main/demo/dwipe-2026-02-05.07-58.gif)
-
-*Click the animation to open the full-size recording. The take follows [`demo/GIF-SCRIPT.md`](https://github.com/joedefen/grub-wiz/blob/main/demo/GIF-SCRIPT.md): edit `TIMEOUT`, clear a warning, write GRUB, then tag, compare, and restore a backup.*
 
 #### Installation and Running is Easy
 
