@@ -20,6 +20,12 @@ takes on the demo machine.
 - Prefer passwordless `sudo` (or a root shell in the VM) so the recording
       never contains a password prompt.
 - Capture tool: `asciinema` + `agg` is the simplest path.
+- Reset between takes
+  - Use `grub-wiz --factory-reset` only if you also want to clear the warning
+        database and the discovery cache. It intentionally keeps `.bak` files.
+  - Start `grub-wiz`, press `[R]estore` and `[r]estore` the `BASELINE` backup
+    - optionally, remove all the backups, too
+  - Press `ESC` back to `EDIT`, then `[w]rite-grub` to complete restore.
 
 Start the recorder **before** launching the TUI if you use `asciinema`
 (it records the shell it starts), or launch the TUI first and use an external
@@ -132,16 +138,6 @@ grub-wiz          # or: python3 runner
   `~Timeout+1` means a value-only change where `Timeout` is the first changed
   parameter and one more parameter changed too.
 
-## Reset between takes
-
-Best option:
-- Revert the VM snapshot.
-
-If you cannot snapshot:
-- Start `grub-wiz`, press `[R]estore` and `[r]estore` the `BASELINE` backup
-- Press `ESC` back to `EDIT`, then `[w]rite-grub` to complete restore.
-- Use `grub-wiz --factory-reset` only if you also want to clear the warning
-      database and the discovery cache. It intentionally keeps `.bak` files.
 
 ## Render the GIF
 
