@@ -14,7 +14,7 @@ takes on the demo machine.
 - Resize the terminal to about **80x24** (the app needs at least 70x10).
 - Use a font that can draw `⮜ ⮞ ✘ ● 🟌 ⚠️`
 - Ensure passwordless `sudo`
-- Capture tool: `keep`
+- Capture tool: `peek`
 
 ## The take (in "shorthand")
   - `clear; ./runner --factory reset; ./runner`
