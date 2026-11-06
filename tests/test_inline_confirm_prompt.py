@@ -16,8 +16,10 @@ import curses as cs
 from pathlib import Path
 from types import SimpleNamespace
 
+from console_window import Theme
 from console_window.textwidth import string_width
 
+from grub_wiz import main as main_module
 from grub_wiz.main import GrubWiz, RestoreScreen, ReviewScreen
 
 
@@ -51,6 +53,19 @@ def test_the_header_prompt_is_bold(headless_win):
     gw.add_confirm_header()
 
     assert cs.A_BOLD in [attr for attr, _cells in gw.win.head.text_attrs[0]]
+
+
+def test_the_header_prompt_takes_the_attribute_it_is_given(headless_win):
+    """A screen may paint the question with a theme role (REVIEW uses DANGER)."""
+    gw = make_gw(headless_win)
+    colour = cs.A_BOLD | 0x0100
+
+    gw.begin_confirm('Commit changes and update GRUB?')
+    gw.add_confirm_header(attr=colour)
+
+    # Centering adds the leading pad with the same attribute, so the whole
+    # band, not just its text, carries the colour.
+    assert set(attr for attr, _cells in gw.win.head.text_attrs[0]) == {colour}
 
 
 def test_confirming_key_runs_the_callback_after_the_prompt_is_gone(
@@ -238,18 +253,23 @@ def test_header_hints_keep_their_style_when_no_prompt_is_live():
     assert captured == [('REVIEW  ?:help [q]uit', None)]
 
 
-def test_review_header_appends_the_live_confirmation_after_its_hints():
+def test_review_header_appends_the_live_confirmation_after_its_hints(
+        monkeypatch):
+    monkeypatch.setattr(main_module, 'theme_attr', lambda pair: pair << 8)
     screen = object.__new__(ReviewScreen)
     calls = []
     screen.gw = SimpleNamespace(
         hidden_stats=SimpleNamespace(warn=0),
-        add_confirm_header=lambda: calls.append('confirm'))
+        add_confirm_header=lambda **kwargs: calls.append(kwargs))
     screen.add_common_head1 = lambda title: calls.append('head1')
     screen.add_common_head2 = lambda header: calls.append('head2')
 
     ReviewScreen.add_head(screen)
 
-    assert calls == ['head1', 'head2', 'confirm']
+    assert calls[:2] == ['head1', 'head2']
+    # The commit question is the point of no return: DANGER, plus bold so it
+    # still stands out on a terminal with no colour support.
+    assert calls[2] == {'attr': (Theme.DANGER << 8) | cs.A_BOLD}
 
 
 def test_commit_confirmation_resumes_update_grub_without_asking_again(

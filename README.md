@@ -226,6 +226,7 @@ The picker's key is deliberately kept out of the header lines — headers are fo
 
 * The `default` theme follows your terminal's own colors. If warnings, stars or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
 * `--theme NAME` picks a theme for one run without changing the remembered choice.
+* `grub-wiz --no-color` draws the semantic roles — the warning blocks, the guidance text, the value a change replaces and the commit question on the REVIEW screen — as bold/reverse text instead of colour for that run. The `NO_COLOR` environment variable does the same, unless you pass an explicit `--theme`. Picking a theme with `T`/`t` turns colour back on.
 
 The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). That handling now lives in the [`console-window`](../console-window) library, so grub-wiz only declares its vocabulary and every console-window app benefits from the same behaviour:
 

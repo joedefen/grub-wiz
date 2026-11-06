@@ -545,3 +545,46 @@ def test_find_in_reads_enums_from_cfg():
 
     assert result.idx == 0
     assert result.next_value == 'y'
+
+
+# --- theme colour attributes -----------------------------------------------
+
+def test_theme_attr_is_nothing_when_curses_is_not_initialised(monkeypatch):
+    """A headless draw must not fail over a colour pair."""
+    def not_ready():
+        raise RuntimeError('must call initscr() first')
+
+    monkeypatch.setattr(main_module.cs, 'has_colors', not_ready)
+
+    assert main_module.theme_attr(main_module.Theme.WARNING) == 0
+
+
+def test_theme_attr_is_nothing_on_a_monochrome_terminal(monkeypatch):
+    monkeypatch.setattr(main_module.cs, 'has_colors', lambda: False)
+
+    assert main_module.theme_attr(main_module.Theme.WARNING) == 0
+
+
+def test_theme_attr_is_the_pair_when_colour_is_available(monkeypatch):
+    monkeypatch.setattr(main_module.cs, 'has_colors', lambda: True)
+    monkeypatch.setattr(main_module.cs, 'color_pair', lambda pair: pair << 8)
+
+    assert (main_module.theme_attr(main_module.Theme.WARNING)
+            == main_module.Theme.WARNING << 8)
+
+
+def test_item_prompt_defaults_to_bold_and_takes_a_colour_override(
+        make_headless_win):
+    """REVIEW paints its commit prompt with DANGER; every other screen bold."""
+    chosen = Path('20261025-083036-s559DCA.~Timeout+1.bak')
+    gw = make_tag_gw(make_headless_win())
+    gw.request_backup_tag(chosen, seed='~Timeout+1')
+
+    gw.add_confirm_item_line(chosen)
+    assert gw.win.body.text_attrs[0][0][0] == cs.A_BOLD
+
+    gw.win.clear()
+    colour = cs.A_BOLD | 0x0200
+    gw.add_confirm_item_line(chosen, attr=colour)
+
+    assert gw.win.body.text_attrs[0][0][0] == colour

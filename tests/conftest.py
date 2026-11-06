@@ -28,6 +28,7 @@ import pytest
 from console_window import ConsoleWindow, ConsoleWindowOpts
 from console_window.backend import HeadlessBackend
 
+from grub_wiz.Appearance import set_colors_enabled
 from grub_wiz.ParamDiscovery import ParamDiscovery
 from grub_wiz.UserConfigDir import UserConfigDir
 
@@ -151,6 +152,21 @@ def isolated_param_discovery(monkeypatch):
         "get_singleton",
         staticmethod(lambda: fake_discovery),
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_color_switch(monkeypatch):
+    """Keep the process-wide colour switch out of the runner's environment.
+
+    ``--no-color`` and the ``NO_COLOR`` convention both feed it, so a terminal
+    runner that exports ``NO_COLOR`` (or a test that builds a ``GrubWiz`` with
+    the flag) would otherwise decide what the next test draws.  Tests that
+    exercise the switch seed it explicitly.
+    """
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    set_colors_enabled(True)
+    yield
+    set_colors_enabled(True)
 
 
 class HeadlessTestWin(ConsoleWindow):

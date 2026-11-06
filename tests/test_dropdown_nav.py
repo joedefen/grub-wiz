@@ -14,8 +14,9 @@ second press.
 
 from types import SimpleNamespace
 
-from console_window import Context
+from console_window import Context, Theme
 
+from grub_wiz import main as main_module
 from grub_wiz.main import GrubWiz, HomeScreen
 
 
@@ -30,16 +31,19 @@ class FakeWin:
         self.contexts = []
         self.body = SimpleNamespace(row_cnt=0, contexts=self.contexts)
         self.lines = []
+        self.attrs = []
 
     def reset(self):
         """Mimic ConsoleWindow.clear() between frames."""
         self.lines.clear()
+        self.attrs.clear()
         self.contexts.clear()
         self.body.row_cnt = 0
 
-    def add_body(self, line, context=None):
-        """Record the rendered row and its Context."""
+    def add_body(self, line, attr=None, context=None):
+        """Record the rendered row, its attribute and its Context."""
         self.lines.append(line)
+        self.attrs.append(attr)
         self.contexts.append(context)
         self.body.row_cnt += 1
 
@@ -178,3 +182,69 @@ def test_wrapped_detail_continuations_are_not_pickable():
     for context in win.contexts[1:]:
         assert context.genre == 'TRANSIENT'
         assert context.pickable is False
+
+
+def test_wrapped_detail_rows_carry_the_attribute_they_were_given():
+    """A coloured warning must stay coloured on its wrapped rows.
+
+    REVIEW paints warnings with the theme's WARNING pair and the wrapping is
+    what makes a long warning a multi-row block, so the attribute has to
+    survive both the picked (reformatted) and the plain path.
+    """
+    colour = 0x0300
+    win = FakeWin(pick_pos=0)
+    screen = GrubWiz.__new__(GrubWiz)
+    screen.win = win
+
+    screen.add_wrapped_body_line(
+        'a detail line long enough to wrap at one hundred columns ' * 3,
+        indent=4,
+        is_current=True,
+        attr=colour,
+        context=Context(genre='warn', warn_key='GRUB_TIMEOUT warning'))
+
+    assert len(win.attrs) > 1
+    assert set(win.attrs) == {colour}
+
+    win.reset()
+    screen.add_wrapped_body_line('short warning', indent=4, is_current=False,
+                                 attr=colour)
+
+    assert win.attrs == [colour]
+
+
+def test_home_guidance_rows_carry_the_info_role(monkeypatch):
+    """EDIT colours its dropdown INFO, exactly as REVIEW does.
+
+    Guidance text and enum explanations are advice, not state, so they take
+    the theme's informational role on both screens that emit them.
+    """
+    monkeypatch.setattr(main_module, 'theme_attr', lambda pair: pair << 8)
+    screen, win = make_home_screen(pick_pos=1)
+
+    screen.draw_body()
+
+    transient = [attr for attr, context in zip(win.attrs, win.contexts)
+                 if context is not None and context.genre == 'TRANSIENT']
+    assert transient
+    assert set(transient) == {Theme.INFO << 8}
+
+    # The parameter's own rows are state and stay plain.
+    param = [attr for attr, context in zip(win.attrs, win.contexts)
+             if context is not None and context.genre == 'param']
+    assert param and set(param) == {None}
+
+
+def test_home_wrapped_value_continuations_stay_plain(monkeypatch):
+    """A wrapped value is still state: only the advice below it is INFO."""
+    monkeypatch.setattr(main_module, 'theme_attr', lambda pair: pair << 8)
+    screen, win = make_home_screen(pick_pos=1)
+    screen.body_param_lines = lambda name, is_current: ['GRUB_TIMEOUT   5',
+                                                        '    wrapped value']
+
+    screen.draw_body()
+
+    boxed = [(line, attr) for line, attr in zip(win.lines, win.attrs)
+             if any(char in line for char in '╭│╰')]
+    assert boxed[0] == ('   ╭wrapped value', None)
+    assert {attr for _line, attr in boxed[1:]} == {Theme.INFO << 8}

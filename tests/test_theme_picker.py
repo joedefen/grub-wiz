@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import grub_wiz.main as cli  # noqa: E402
 from console_window import Theme  # noqa: E402
 from console_window import help as display_help  # noqa: E402
+from grub_wiz.Appearance import colors_enabled, set_colors_enabled  # noqa: E402
 from grub_wiz.Glyphs import Glyphs  # noqa: E402
 from grub_wiz.UiPrefs import UiPrefs  # noqa: E402
 
@@ -107,6 +108,31 @@ def test_a_failing_store_never_breaks_the_cycle(headless_win):
     cli.ThemeScreen(app).spin_theme_ACTION()
 
     assert Theme.resolve(headless_win.theme) != start
+
+
+def test_picking_a_theme_lifts_a_no_color_start(headless_win):
+    """Choosing a theme is a request for colour, so the picker gets back out."""
+    app = make_app(headless_win)
+    set_colors_enabled(False)
+
+    cli.ThemeScreen(app).spin_theme_ACTION()
+
+    assert colors_enabled() is True
+
+
+def test_a_failing_store_still_lifts_a_no_color_start(headless_win):
+    """The lift is part of the choice, not part of remembering it."""
+    app = make_app(headless_win)
+
+    def boom(_name):
+        raise OSError('read-only store')
+
+    app.prefs = SimpleNamespace(load=lambda: None, save=boom)
+    set_colors_enabled(False)
+
+    cli.ThemeScreen(app).spin_theme_ACTION()
+
+    assert colors_enabled() is True
 
 
 def test_draw_shows_the_current_theme_swatches_and_the_note(headless_win):

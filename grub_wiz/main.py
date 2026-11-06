@@ -44,6 +44,7 @@ from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 from .UserConfigDir import UserConfigDir
 from .SyncCheck import run_sync_check
+from .Appearance import resolve_colors, semantic_attr, set_colors_enabled
 
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST, THEME_ST = (
     0, 1, 2, 3, 4, 5, 6, 7)
@@ -68,6 +69,25 @@ QUIT_KEY = 0x3
 # A backup tag ends up in a filename, so only the characters BackupTag itself
 # generates are accepted; runs of spaces or dashes fold to a single '-'.
 BACKUP_TAG_PATTERN = re.compile(r'^[-_+~A-Za-z0-9]+$')
+
+
+#: The attribute for a semantic theme role, as the screens call it.  The roles
+#: themselves -- and the ``--no-color`` switch that turns them into attributes
+#: -- live in Appearance; binding the name here keeps every draw site reading
+#: the same.
+theme_attr = semantic_attr
+
+
+def apply_color_policy(cli_opts):
+    """Seed the colour switch from ``--no-color``, ``--theme`` and ``NO_COLOR``.
+
+    Called while the application is being constructed, before the first frame,
+    so colour is decided for the run instead of being painted and then
+    stripped.  A missing ``cli_opts`` (tests, embedded use) means "colour on".
+    """
+    set_colors_enabled(resolve_colors(
+        bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False,
+        getattr(cli_opts, 'theme', None) if cli_opts else None))
 
 
 class Tab:
@@ -461,6 +481,7 @@ class HomeScreen(GrubWizScreen):
                 # While a value is being typed on the line below, the dropdown
                 # is noise: it would push the prompt away from its row, and the
                 # row already shows the old value being replaced.
+                param_line_cnt = len(param_lines)
                 emits = (param_lines if gw.has_live_item_confirm(param_name) else
                          param_lines + gw.drop_down_lines(param_name))
 
@@ -480,9 +501,17 @@ class HomeScreen(GrubWizScreen):
                 # ConsoleWindow) but never navigation stops: otherwise DOWN
                 # lands on a detail row, the redraw drops the dropdown, and a
                 # second DOWN is needed to reach the next parameter.
-                for emit in emits[1:]:
-                    win.add_body(emit, context=Context(genre='TRANSIENT',
-                                                       pickable=False))
+                # INFO is the theme's informational role: guidance and enum
+                # explanations are advice, not state.  The parameter's own
+                # lines end at *param_line_cnt*, so a wrapped value
+                # continuation stays plain while the advice below it is
+                # coloured.
+                for idx, emit in enumerate(emits[1:], start=1):
+                    win.add_body(emit,
+                                 attr=(theme_attr(Theme.INFO)
+                                       if idx >= param_line_cnt else None),
+                                 context=Context(genre='TRANSIENT',
+                                                 pickable=False))
                 # A live inline edit sits at the end of this parameter's block,
                 # so the row above keeps showing the value being replaced.
                 gw.add_confirm_item_line(param_name)
@@ -673,8 +702,9 @@ class ReviewScreen(HomeScreen):
         self.add_common_head2(header)
         # A confirmation that affects the whole program goes on its own header
         # line, immediately before the divider, so it reads as a screen-level
-        # prompt rather than as part of the selected item.
-        gw.add_confirm_header()
+        # prompt rather than as part of the selected item.  DANGER: answering
+        # it commits the change, the point of no return for the session.
+        gw.add_confirm_header(attr=theme_attr(Theme.DANGER) | cs.A_BOLD)
         # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
     def add_body(self):
@@ -749,10 +779,13 @@ class ReviewScreen(HomeScreen):
             changed = bool(ns.old_value is not None
                            and str(ns.value) != str(ns.old_value))
             if changed:
-                # TRANSIENT line showing old value (detail, not a pick target)
-                self.win.add_body(f'{"└──────── was":>{tab.lwid}}  {ns.old_value}',
-                                context=Context(genre='TRANSIENT',
-                                                pickable=False))
+                # TRANSIENT line showing old value (detail, not a pick target).
+                # SUCCESS marks it as the value that was in effect: the change
+                # is already good, and this is the line it replaced.
+                self.win.add_body(
+                    f'{"└──────── was":>{tab.lwid}}  {ns.old_value}',
+                    attr=theme_attr(Theme.SUCCESS),
+                    context=Context(genre='TRANSIENT', pickable=False))
 
             for hey in ns.heys:
                 warn_key = WarnDB.make_key(param_name, hey[1])
@@ -777,22 +810,31 @@ class ReviewScreen(HomeScreen):
                         warn_selected = True
                         target_key = ('warn', warn_key, 0)
                     anchors[self.win.body.row_cnt] = ('warn', warn_key, 0)
+                    # WARNING is the theme's caution role, so the eye finds a
+                    # warning block without reading the severity stars.
                     gw.add_wrapped_body_line(line, tab.lwid+2,
                                              warn_selected,
+                                             attr=theme_attr(Theme.WARNING),
                                              context=Context(genre='warn', warn_key=warn_key))
 
             if selected and not gw.has_live_item_confirm(param_name):
                 emits = gw.drop_down_lines(param_name)
                 if len(emits) > 1:
                     emits = self.left_side_box(emits)
-                # Add TRANSIENT dropdown lines (detail, not pick targets)
+                # Add TRANSIENT dropdown lines (detail, not pick targets).
+                # INFO is the theme's informational role: guidance and enum
+                # explanations are advice, not state.
                 for emit in emits:
-                    self.win.add_body(emit, context=Context(genre='TRANSIENT',
-                                                            pickable=False))
+                    self.win.add_body(emit, attr=theme_attr(Theme.INFO),
+                                      context=Context(genre='TRANSIENT',
+                                                      pickable=False))
 
             # A live inline edit is drawn under the block it changes, on this
-            # screen too: editing from REVIEW must not hide the prompt.
-            gw.add_confirm_item_line(param_name)
+            # screen too: editing from REVIEW must not hide the prompt.  DANGER
+            # because on REVIEW the prompt commits the change ("Commit
+            # changes..."), which is the point of no return for the session.
+            gw.add_confirm_item_line(
+                param_name, attr=theme_attr(Theme.DANGER) | cs.A_BOLD)
 
         self.apply_pick_anchors(anchors, target_key)
 
@@ -1392,6 +1434,9 @@ class _PrefsThemeStore:
     this store reaches the live preferences through ``GrubWiz.singleton``
     instead of holding a reference captured here.  A missing application (a
     bare screen in a test) means "nothing remembered", which is not an error.
+
+    Saving also lifts a ``--no-color`` start: choosing a theme is a request for
+    colour, and the picker has to be able to get back out of a monochrome run.
     """
 
     @staticmethod
@@ -1403,6 +1448,7 @@ class _PrefsThemeStore:
         return prefs.load() if prefs is not None else None
 
     def save(self, name):
+        set_colors_enabled(True)
         prefs = self._prefs()
         if prefs is None:
             return
@@ -1660,6 +1706,10 @@ class GrubWiz:
         # hand-edited preference) degrades instead of failing to draw.
         self.theme_name = Theme.initial(
             getattr(cli_opts, 'theme', None) if cli_opts else None, self.prefs)
+        # Colour is decoration, never information: --no-color (or NO_COLOR,
+        # unless an explicit --theme asks for colour) resolves the semantic
+        # roles to attributes for this run.
+        apply_color_policy(cli_opts)
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
@@ -2093,13 +2143,19 @@ class GrubWiz:
         """Truncate *line* to the window width using cell-aware widths."""
         return truncate_to_width(line, self.win.cols-1)
 
-    def add_wrapped_body_line(self, line, indent, is_current, context=None):
+    def add_wrapped_body_line(self, line, indent, is_current, attr=None,
+                              context=None):
         """Add a body line, wrapping it when it is the selected row.
+
+        *attr* is the row attribute (a theme colour pair, for example).  It is
+        applied to every screen row the line wraps onto, so a coloured warning
+        stays coloured when it is the picked row and gets reformatted.
 
         Returns the number of screen lines added.
         """
         if not is_current:
-            self.win.add_body(self.truncate_line(line), context=context)
+            self.win.add_body(self.truncate_line(line), attr=attr,
+                              context=context)
             return 1
 
         wid = self.win.cols
@@ -2113,10 +2169,11 @@ class GrubWiz:
             # First line gets the context; continuation rows inherit the
             # parent's visibility but are detail, never pick targets.
             if idx == 0:
-                self.win.add_body(wrap, context=context)
+                self.win.add_body(wrap, attr=attr, context=context)
             else:
-                self.win.add_body(wrap, context=Context(genre='TRANSIENT',
-                                                        pickable=False))
+                self.win.add_body(wrap, attr=attr,
+                                  context=Context(genre='TRANSIENT',
+                                                  pickable=False))
         return len(wraps) # lines added
 
     def is_warn_hidden(self, param_name, hey):
@@ -2151,19 +2208,24 @@ class GrubWiz:
         line_attr = cs.A_DIM if self.win is not None and self.win.prompt_active else None
         self.win.add_fancy_header(line, mode=mode, line_attr=line_attr)
 
-    def add_confirm_header(self):
+    def add_confirm_header(self, attr=None):
         """Draw a program/screen-scoped confirmation as the last header line.
 
         ``add_prompt_header`` rather than ``add_fancy_header``: the bracketed
         key hint is literal text here, not the ``[x]`` markup the fancy parser
         would consume.  Centered, so the question sits in the middle of the
         band instead of hugging the left edge among the (now dim) hints.
+
+        *attr* overrides the default bold question so a screen can paint it
+        with a theme colour role; REVIEW asks DANGER because answering it
+        commits the session's changes.
         """
         if self.win is None or self.confirm_scope != 'header':
             return
-        self.win.add_prompt_header(attr=cs.A_BOLD, align='center')
+        self.win.add_prompt_header(
+            attr=cs.A_BOLD if attr is None else attr, align='center')
 
-    def add_confirm_item_line(self, item_key):
+    def add_confirm_item_line(self, item_key, attr=None, hint_attr=None):
         """Draw an item-scoped confirmation directly below that item.
 
         A screen calls this from its body builder after emitting the row whose
@@ -2171,12 +2233,18 @@ class GrubWiz:
         detail rows, not pick targets, so the row the prompt concerns stays
         selected while it is live.  Truncating the hint is the window's job
         (``add_prompt_lines``), so the dim line cannot overflow here.
+
+        *attr* and *hint_attr* override the default bold prompt and dim hint,
+        so a screen can paint its question with a theme colour role (REVIEW
+        uses DANGER because its prompt commits the change).
         """
         if self.win is None or self.confirm_scope != 'item':
             return
         if self.confirm_item_key != item_key:
             return
-        self.win.add_prompt_lines(attr=cs.A_BOLD, hint_attr=cs.A_DIM)
+        self.win.add_prompt_lines(
+            attr=cs.A_BOLD if attr is None else attr,
+            hint_attr=cs.A_DIM if hint_attr is None else hint_attr)
 
     def has_live_item_confirm(self, item_key):
         """True when the live inline prompt belongs to *item_key*.
@@ -2946,6 +3014,10 @@ def build_parser():
                         help='for test only: enables screen redraw indicator')
     parser.add_argument('-k', '--keep-all-bak', action='store_true',
                         help='keep every backup; skip the start-up purge')
+    parser.add_argument('--no-color', action='store_true', dest='no_color',
+                        help='use attributes instead of the semantic colour '
+                             'roles (NO_COLOR is honoured too); a theme picked '
+                             'on the COLOR THEME screen turns colour back on')
     # --ascii (with an optional boolean), --glyphs and --theme come from
     # console-window, so the flags mean the same thing here as in every other
     # app built on the library.  Passing the store only makes the help text
