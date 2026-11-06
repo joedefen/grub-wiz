@@ -89,11 +89,14 @@ def test_discovery_show_dumps_defined_params(monkeypatch, fake_wiz):
     assert fake_wiz.param_discovery.state is None
 
 
-def test_no_color_is_off_by_default_and_parsed_when_given():
-    """A per-run switch: the theme picker can lift it again."""
+def test_no_color_is_absent_unless_given():
+    """console-window supplies the switch; absent means "detect", not "off".
+
+    The theme picker can lift an explicit ``--no-color`` again.
+    """
     parser = cli.build_parser()
 
-    assert parser.parse_args([]).no_color is False
+    assert parser.parse_args([]).no_color is None
     assert parser.parse_args(['--no-color']).no_color is True
 
 

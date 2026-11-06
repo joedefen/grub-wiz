@@ -14,9 +14,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import grub_wiz.main as cli  # noqa: E402
-from console_window import Theme  # noqa: E402
+from console_window import (  # noqa: E402
+    Theme, colors_enabled, set_colors_enabled)
 from console_window import help as display_help  # noqa: E402
-from grub_wiz.Appearance import colors_enabled, set_colors_enabled  # noqa: E402
 from grub_wiz.Glyphs import Glyphs  # noqa: E402
 from grub_wiz.UiPrefs import UiPrefs  # noqa: E402
 

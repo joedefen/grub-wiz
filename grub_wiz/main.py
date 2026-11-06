@@ -26,7 +26,8 @@ from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
                             InlineConfirmation, BasicTextScreen, BasicHelpScreen,
-                            Theme)
+                            Theme, resolve_appearance, semantic_attr,
+                            set_colors_enabled)
 from console_window import cli as display_cli
 from console_window import help as display_help
 from . import __version__
@@ -44,7 +45,6 @@ from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 from .UserConfigDir import UserConfigDir
 from .SyncCheck import run_sync_check
-from .Appearance import resolve_colors, semantic_attr, set_colors_enabled
 
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST, THEME_ST = (
     0, 1, 2, 3, 4, 5, 6, 7)
@@ -73,8 +73,8 @@ BACKUP_TAG_PATTERN = re.compile(r'^[-_+~A-Za-z0-9]+$')
 
 #: The attribute for a semantic theme role, as the screens call it.  The roles
 #: themselves -- and the ``--no-color`` switch that turns them into attributes
-#: -- live in Appearance; binding the name here keeps every draw site reading
-#: the same.
+#: -- live in console-window's appearance module; binding the name here keeps
+#: every draw site reading the same.
 theme_attr = semantic_attr
 
 
@@ -83,11 +83,14 @@ def apply_color_policy(cli_opts):
 
     Called while the application is being constructed, before the first frame,
     so colour is decided for the run instead of being painted and then
-    stripped.  A missing ``cli_opts`` (tests, embedded use) means "colour on".
+    stripped.  The precedence (flag, explicit theme, ``NO_COLOR``, remembered
+    choice) is console-window's, so every app on the library decides the same
+    way.  A missing ``cli_opts`` (tests, embedded use) means "colour on".
     """
-    set_colors_enabled(resolve_colors(
-        bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False,
-        getattr(cli_opts, 'theme', None) if cli_opts else None))
+    _theme, colors = resolve_appearance(
+        getattr(cli_opts, 'theme', None) if cli_opts else None,
+        bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False)
+    set_colors_enabled(colors)
 
 
 class Tab:
@@ -3014,14 +3017,10 @@ def build_parser():
                         help='for test only: enables screen redraw indicator')
     parser.add_argument('-k', '--keep-all-bak', action='store_true',
                         help='keep every backup; skip the start-up purge')
-    parser.add_argument('--no-color', action='store_true', dest='no_color',
-                        help='use attributes instead of the semantic colour '
-                             'roles (NO_COLOR is honoured too); a theme picked '
-                             'on the COLOR THEME screen turns colour back on')
-    # --ascii (with an optional boolean), --glyphs and --theme come from
-    # console-window, so the flags mean the same thing here as in every other
-    # app built on the library.  Passing the store only makes the help text
-    # say what is true: the choice is remembered.
+    # --ascii (with an optional boolean), --glyphs, --theme and --no-color come
+    # from console-window, so the flags mean the same thing here as in every
+    # other app built on the library.  Passing the store only makes the help
+    # text say what is true: the choice is remembered.
     display_cli.add_display_arguments(parser, theme_store=PREFS_THEME_STORE)
     return parser
 

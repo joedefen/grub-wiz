@@ -25,10 +25,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from console_window import ConsoleWindow, ConsoleWindowOpts
+from console_window import ConsoleWindow, ConsoleWindowOpts, set_colors_enabled
 from console_window.backend import HeadlessBackend
 
-from grub_wiz.Appearance import set_colors_enabled
 from grub_wiz.ParamDiscovery import ParamDiscovery
 from grub_wiz.UserConfigDir import UserConfigDir
 
