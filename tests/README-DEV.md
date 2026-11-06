@@ -145,8 +145,10 @@ it was told about. Which ones those are is `[tool.bless] branches` in
   the two lags is fast-forwarded onto the other before the tag, so a release
   always leaves them at one commit.
 
-This project declares `["main", "dev"]`; both branches exist locally and on
-origin, so a release leaves them at one commit and tags that commit.
+This project declares `["main", "dev"]`.  `dev` does not exist yet, so a release
+runs from `main` alone and pushes only `main` and the tag.  When `dev` is
+created, it must also be pushed to origin; from then on a release aligns the two
+at one commit and tags it.
 
 Either way the gate refuses a branch it was not told about, a branch it has to
 push that is missing on origin, two branches that have diverged, and a push that

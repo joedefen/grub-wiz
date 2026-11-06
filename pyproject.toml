@@ -60,9 +60,10 @@ dev = [
 grub-wiz = "grub_wiz.main:run_cli"
 
 [tool.bless]
-# Both branches exist locally and on origin.  `bless` leaves whichever one lags
-# fast-forwarded onto the other before tagging, so a release always leaves them
-# at one commit.
+# `dev` joins the model once it exists.  While it does not, `bless` releases
+# from `main` alone and pushes only what exists; once `dev` is created it must
+# also exist on origin, and whichever of the two lags is fast-forwarded onto the
+# other before tagging.
 branches = ["main", "dev"]
 
 [tool.pytest.ini_options]
