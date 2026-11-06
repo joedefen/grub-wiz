@@ -29,6 +29,7 @@ from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Theme)
 from console_window import cli as display_cli
 from console_window import help as display_help
+from . import __version__
 from .Glyphs import Glyphs
 from .UiPrefs import UiPrefs
 from .CannedConfig import CannedConfig, has_edit_regex, is_expert_edit
@@ -2929,6 +2930,9 @@ def build_parser():
     editor (and without the sudo re-exec).
     """
     parser = ArgumentParser(description='grub-wiz: your grub-update guide')
+    parser.add_argument('--version', action='version',
+                        version=f'grub-wiz {__version__}',
+                        help="show grub-wiz's version and exit")
     parser.add_argument('--discovery', '--parameter-discovery', default=None,
                         choices=('enable', 'disable', 'show'),
                         help='control/show parameter discovery state')
@@ -2952,8 +2956,11 @@ def build_parser():
 
 def main():
     """Parse CLI options and start the TUI or the requested diagnostic mode."""
-    rerun_module_as_root('grub_wiz.main')
+    # Parse before the sudo re-exec so `--version` and `--help` answer as an
+    # ordinary user.  The release gate's smoke stage runs the installed console
+    # script with no privileges and matches its output against the version.
     opts = build_parser().parse_args()
+    rerun_module_as_root('grub_wiz.main')
 
     wiz = GrubWiz(cli_opts=opts)
     if opts.validator_demo:

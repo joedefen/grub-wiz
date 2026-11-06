@@ -7,7 +7,10 @@ This directory contains regression tests for the `grub-wiz` project.
 ```
 tests/
 ├── README.md                          # This file
+├── README-DEV.md                      # Test gate, release gate, adoption record
 ├── conftest.py                        # Isolates user/system state per test
+├── inspect_dist.py                    # Distribution inspector used by bless and CI
+├── test_bless.py                      # Identity + inspector half of the release gate
 ├── test_grubfile_parsing.py          # Test suite for GrubFile parsing
 ├── test_grubfile_branches.py         # Duplicate lines, adoption, write failures
 ├── test_validator_rules.py           # Comprehensive test suite for WizValidator rules
@@ -61,32 +64,43 @@ chmod +x tests/*.py
 ./tests/test_validator_rules.py
 ```
 
+## Releasing
+
+`./bless` is the only path to a PyPI upload; it always runs the full gate and
+then asks whether to rehearse (`test`) or publish. The layout, stages, branch
+model and the record of this project's adoption live in
+[`README-DEV.md`](README-DEV.md). The strategy every project shares is
+[`../../blessd/docs/release-strategy.md`](../../blessd/docs/release-strategy.md).
+
 ## Continuous Integration
 
 GitHub Actions runs the suite on every push to `main`/`dev` and on every pull
 request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
 
 - Python 3.10, 3.11, 3.12 and 3.13 are tested on `ubuntu-24.04`. 3.10 is the
-  minimum supported version, imposed by the pinned `console-window`
+  minimum supported version, imposed by the pinned `console-window==2.1.3`
   (`Requires-Python: >=3.10`) and matched by `requires-python` in
-  [`pyproject.toml`](../pyproject.toml:13).
-- The workflow installs `.[dev]`, byte-compiles the sources, runs `pytest`, and
-  separately builds a wheel to catch packaging regressions.
+  [`pyproject.toml`](../pyproject.toml).
+- The workflow runs the same three gate commands `./bless` runs -- `ruff check`,
+  `compileall`, and `pytest --cov=grub_wiz` -- so CI and the release gate cannot
+  disagree about what green means.
+- A separate job builds the wheel and the sdist and runs
+  [`tests/inspect_dist.py`](inspect_dist.py), the same inspector `./bless`
+  refuses to upload without.
 - The validator tests never call `lsblk`/`efibootmgr`; they inject a fixed
   disk-layout object, so results do not depend on the runner's hardware.
 - The new command/restore/discovery tests never touch `/etc/default/grub` or
   the real user state directory; they use the `tmp_path`-backed fake from
   [`conftest.py`](conftest.py:148) and patch `os.geteuid()`.
-- Coverage is not gated. A branch-coverage run on 2026-10-25 measured 66%
-  overall: `BackupMgr`, `WarnDB`, `DistroVars`, `GrubWriter`, `CannedConfig`,
-  and `GrubCfgParser` are 93–100%; `GrubFile`, `WizValidator`, and
-  `ParamDiscovery` are 78–92%; `main.py` is 42% because most of it is curses
-  drawing. When `coverage` is installed (it is not currently in the `dev`
-  extras), run:
+- Coverage is gated at 60% through `[tool.coverage.report] fail_under`. A
+  branch-coverage run on 2026-10-25 measured 66% overall: `BackupMgr`,
+  `WarnDB`, `DistroVars`, `GrubWriter`, `CannedConfig`, and `GrubCfgParser` are
+  93–100%; `GrubFile`, `WizValidator`, and `ParamDiscovery` are 78–92%;
+  `main.py` is 42% because most of it is curses drawing. Raise the floor when
+  the number rises, never lower it. Reproduce the number locally with:
 
   ```bash
-  python3 -m coverage run --branch --source=grub_wiz -m pytest
-  python3 -m coverage report
+  python3 -m pytest -q --cov=grub_wiz --cov-report=term-missing
   ```
 
 ## What Is Tested
@@ -354,10 +368,10 @@ GRUB_FOO="timeout is $GRUB_TIMEOUT seconds"
 
 To add new regression tests:
 
-1. Create a new test GRUB configuration file in `test_data/`
-2. Add a test function to `test_grubfile_parsing.py`
-3. Call the new test function from `main()`
-4. Run the tests to verify
+1. Create a new test GRUB configuration file in `test_data/` when the case
+   needs one.
+2. Add a `test_*` function to the matching `tests/test_*.py` module.
+3. Run `python3 -m pytest tests/test_<module>.py` to verify it.
 
 Example test function:
 ```python

@@ -46,6 +46,21 @@ def fixture_fake_wiz(monkeypatch):
     return wiz
 
 
+def test_version_is_answered_before_the_sudo_reexec(monkeypatch, capsys):
+    """The release gate's smoke venv runs ``grub-wiz --version`` without root."""
+    reruns = []
+    monkeypatch.setattr(cli, 'rerun_module_as_root',
+                        lambda module_name: reruns.append(module_name))
+    monkeypatch.setattr(sys, 'argv', ['grub-wiz', '--version'])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 0
+    assert reruns == []
+    assert capsys.readouterr().out.strip() == f'grub-wiz {cli.__version__}'
+
+
 @pytest.mark.parametrize('flag, expected', [('enable', True), ('disable', False)])
 def test_discovery_enable_disable_sets_manual_state(monkeypatch, fake_wiz, flag, expected):
     """``--discovery=enable|disable`` calls ``manual_enable`` with a bool.
