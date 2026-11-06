@@ -67,9 +67,12 @@ chmod +x tests/*.py
 ## Releasing
 
 `./bless` is the only path to a PyPI upload; it always runs the full gate and
-then asks whether to rehearse (`test`) or publish. The layout, stages, branch
-model and the record of this project's adoption live in
-[`README-DEV.md`](README-DEV.md). The strategy every project shares is
+then asks whether to rehearse (`test`) or publish. Run it with the project venv
+active (`source .venv/bin/activate`), or as `.venv/bin/python ./bless`: the
+gate uses the `python3` on `PATH`, which must be the interpreter holding the
+`dev` extra. The layout, stages, branch model and the record of this project's
+adoption live in [`README-DEV.md`](README-DEV.md). The strategy every project
+shares is
 [`../../blessd/docs/release-strategy.md`](../../blessd/docs/release-strategy.md).
 
 ## Continuous Integration
