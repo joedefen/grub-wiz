@@ -43,7 +43,18 @@ too):
 interpreter -- the one holding `console-window` and the dev extra. Activate the
 virtualenv first, or start the gate by hand:
 
+    source .venv/bin/activate
+    ./bless
+
+    # or, without activating:
     .venv/bin/python ./bless
+
+If `./bless` refuses with `twine ... is older than the required ...` or names an
+old `packaging`, it is running `/usr/bin/python3`, not the venv. The shebang is
+`#!/usr/bin/env python3`, so `./bless` uses whatever `python3` is on `PATH`; the
+gate deliberately runs every stage with `sys.executable` and will not pick a
+different interpreter for you. Activate the venv as above. (`bt` starts the gate
+under the venv it manages, but a typed `./bless` does not go through `bt`.)
 
 Then the commands `bless` runs, in the same order, on the same interpreter:
 
@@ -170,8 +181,9 @@ Run it by hand on any built pair:
 
 1. Bump `__version__` in [`grub_wiz/__init__.py`](../grub_wiz/__init__.py) and
    commit.
-2. Run `./bless`. The gate runs in full.
-3. Answer `test` to rehearse on TestPyPI, then run `./bless` again and answer
+2. With the venv active (`source .venv/bin/activate`), run `./bless`. The gate
+   runs in full. Without activation, use `.venv/bin/python ./bless`.
+3. Answer `test` to rehearse on TestPyPI, then run the gate again and answer
    `publish` -- or go straight to `publish`.
 
 `[tool.bless] branches` names what `publish` pushes. Both branches in that list
