@@ -1,8 +1,9 @@
 # grub-wiz: working on the source tree
 
 This is the developer companion to [`README.md`](../README.md), which documents
-the tool for its users. Here we document the two things a maintainer needs and a
-user does not: the **test gate** and the **release gate** (`./bless`).
+the tool for its users. Here we document the three things a maintainer needs and
+a user does not: the **development environment** (`.venv`, `bt`), the **test
+gate**, and the **release gate** (`./bless`).
 
 This file lives in `tests/`, so its links point one directory up. The commands
 assume the repository root, which is where the gate has to be run.
@@ -17,7 +18,8 @@ assume the repository root, which is where the gate has to be run.
 | [`blessd/docs/release-strategy.md`](../../blessd/docs/release-strategy.md) | The release strategy every project shares: the branch model, the stages, the rehearsal, the credentials. This file documents only what is particular to `grub-wiz`. |
 | [`tests/inspect_dist.py`](inspect_dist.py) | The distribution inspector. `bless` refuses to upload a wheel and sdist it has not inspected with this file; CI runs the same file. |
 | [`tests/test_bless.py`](test_bless.py) | The identity this tree derives from `pyproject.toml` and the inspector it uploads behind. It deliberately does not test the gate's policy. |
-| [`runner`](../runner) | Runs the tree from source (`python -m grub_wiz.main`) for debugging. |
+| [`runner`](../runner) | Runs the tree from source (`python -m grub_wiz.main`) for debugging, under `.venv`. It is the non-invasive way to run the code under test: it never touches `~/.local/bin/grub-wiz`, so a released install keeps working. |
+| [`.venv`](../.venv) | The editable/debug environment: this tree installed with `pip install -e '.[dev]'`, its runtime dependencies and the gate's tool floors. Made by `bt penv`; never tracked, never used to hold a released artifact. |
 | [`.gitignore`](../.gitignore) | Keeps gate artifacts (`build/`, `dist/`, `.coverage*`, caches, `*.whl`, `*.tar.gz`) out of `git status`, because the gate refuses a dirty tree. |
 
 The version lives in exactly one place. `pyproject.toml` declares
@@ -31,13 +33,22 @@ the code, so it is not there.
 gate runs it as an ordinary user on a machine with no saved state. `--help` is
 answered there too, for the same reason.
 
-## The test gate
+## The development environment
 
-Install what the gate needs (this is the interpreter that must run `bless`,
-too):
+`.venv` is the editable/debug environment, and `bt penv` is what makes it:
 
-    python3 -m venv .venv
-    .venv/bin/python -m pip install -e '.[dev]'
+    bt penv
+
+It rebuilds `.venv` from scratch -- this tree installed editably with the
+`dev` extra, its runtime dependencies, and the gate's tool floors -- so pytest,
+`./bless` and a VS Code debugger all run the source and breakpoints land in the
+tree. The interpreter to select in VS Code is
+`.venv/bin/python` (`/home/<user>/Projects/grub-wiz/.venv/bin/python`), which
+`bt status` prints for you.
+
+`bt penv` never touches `~/.local/bin`, so whatever entry point is installed
+there keeps running. [The entry point](#the-entry-point-and-who-owns-it) is a
+separate decision from this section.
 
 `bless` runs every stage with `sys.executable`, so it has to be *that*
 interpreter -- the one holding `console-window` and the dev extra. Activate the
@@ -55,6 +66,41 @@ old `packaging`, it is running `/usr/bin/python3`, not the venv. The shebang is
 gate deliberately runs every stage with `sys.executable` and will not pick a
 different interpreter for you. Activate the venv as above. (`bt` starts the gate
 under the venv it manages, but a typed `./bless` does not go through `bt`.)
+
+[`runner`](../runner) runs the same source without touching `~/.local/bin` at
+all, which is why it is kept:
+
+    source .venv/bin/activate
+    ./runner
+
+(or `.venv/bin/python runner`, without activating). Run it under `.venv`: the
+shebang is `#!/usr/bin/env python3`, so a bare `./runner` with no venv active
+resolves the interpreter from `PATH` and can pick up the old user-site install.
+It works at all now because `.venv` carries the package and its dependencies;
+before this model, the package was absent from `.venv`, so the runner fell back
+to whatever `python3` was on `PATH`.
+
+### The entry point, and who owns it
+
+`~/.local/bin/grub-wiz` (pipx's `PIPX_BIN_DIR`) is the one stable entry point,
+and exactly one thing owns it at a time:
+
+* **release mode** -- pipx installed a released artifact from PyPI or TestPyPI
+  in its own per-app venv: `bt prod`, `bt test`, or `pipx install --force
+  grub-wiz`. This tree is in this mode now; `bt status` reports
+  `Owned by: pipx -> ~/.local/share/pipx/venvs/grub-wiz/...`.
+* **edit mode** -- `bt edit` uninstalls the pipx app, refreshes `.venv`, and
+  links `~/.local/bin/grub-wiz` at `.venv/bin/grub-wiz`, so the path runs the
+  code under test.
+
+The two are a switch, not two installs: whichever ran last owns the path. No
+subcommand uses `pip install --user` any more; if `bt status` reports a
+`Legacy --user install`, a one-time `bt clean` removes it and the links the old
+model left behind.
+
+Because the path is stable, a systemd unit would name it
+(`ExecStart=%h/.local/bin/grub-wiz`) and a restart would re-resolve whichever
+mode is active. This project ships no such unit.
 
 Then the commands `bless` runs, in the same order, on the same interpreter:
 
@@ -184,7 +230,9 @@ Run it by hand on any built pair:
 1. Bump `__version__` in [`grub_wiz/__init__.py`](../grub_wiz/__init__.py) and
    commit.
 2. With the venv active (`source .venv/bin/activate`), run `./bless`. The gate
-   runs in full. Without activation, use `.venv/bin/python ./bless`.
+   runs in full. Without activation, use `.venv/bin/python ./bless`. `bt penv`
+   is enough to provide that venv: the gate reads the tree, and a release never
+   installs into `.venv`.
 3. Answer `test` to rehearse on TestPyPI, then run the gate again and answer
    `publish` -- or go straight to `publish`.
 
@@ -217,6 +265,14 @@ half lives in [`blessd/docs/release-strategy.md`](../../blessd/docs/release-stra
   tree's identity and the inspector; the gate itself -- branch plan, refusals,
   prompt, index check, emitter -- is tested once, in
   [`../../blessd/tests/test_bless.py`](../../blessd/tests/test_bless.py).
+* The per-project environment model landed later and changed only where the
+  package lives, not the gate. Before it, `.venv` held the dev tools alone and
+  the package lived in the system user site (`pip install --user`); now `bt
+  penv` rebuilds `.venv` with `-e '.[dev]'` and `~/.local/bin/grub-wiz` is
+  owned by exactly one of pipx (a release) or the tree (`bt edit`). This tree
+  stayed in release mode -- pipx owns the entry point, `bt penv` supplied the
+  editable `.venv`, and `runner` was kept as the non-invasive way to run the
+  source -- so nothing under `~/.local/bin` changed.
 * `bt` reads the branch plan through `./bless --branch-plan`; `bt audit` is the
   outside check that this project's `bless` is the build named above, and
   `bt status` prints the same answer as one non-blocking line.

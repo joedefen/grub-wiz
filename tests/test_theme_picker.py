@@ -85,14 +85,65 @@ def test_cycling_remembers_the_theme_the_window_draws(headless_win):
 
 
 def test_cycling_wraps_and_leaves_a_valid_theme(headless_win):
-    names = Theme.list_all()
     app = make_app(headless_win)
 
-    for _ in range(len(names) + 1):
+    for _ in range(len(cli.THEME_CYCLE) + 1):
         cli.ThemeScreen(app).spin_theme_ACTION()
-        assert headless_win.theme in names
+        # The window is always on a library palette, even while on mono.
+        assert headless_win.theme in Theme.list_all()
 
-    assert UiPrefs().get('theme') in names
+    assert UiPrefs().get('theme') in cli.THEME_CYCLE
+
+
+def test_the_cycle_offers_every_palette_then_mono():
+    assert cli.THEME_CYCLE[:-1] == tuple(Theme.list_all())
+    assert cli.THEME_CYCLE[-1] == cli.MONO_THEME
+
+
+def test_cycling_into_mono_turns_colour_off_and_remembers_it(headless_win):
+    app = make_app(headless_win)
+    app.theme_name = 'nord'          # mono's predecessor, so one step lands on it
+    Theme.set_active('nord')
+
+    cli.ThemeScreen(app).spin_theme_ACTION()
+
+    assert colors_enabled() is False
+    assert app.theme_name == cli.MONO_THEME
+    assert UiPrefs().get('theme') == cli.MONO_THEME
+    # mono is a choice, not a palette: the window keeps a valid palette.
+    assert headless_win.theme in Theme.list_all()
+
+
+def test_cycling_out_of_mono_restores_colour_and_a_palette(headless_win):
+    app = make_app(headless_win)
+    app.theme_name = cli.MONO_THEME
+    set_colors_enabled(False)
+
+    cli.ThemeScreen(app).spin_theme_ACTION()
+
+    assert colors_enabled() is True
+    assert app.theme_name in Theme.list_all()
+    assert UiPrefs().get('theme') == app.theme_name
+
+
+def test_a_no_color_run_cycles_as_if_it_were_on_mono(headless_win):
+    """``--no-color`` is mono for this run, so the next palette is first."""
+    app = make_app(headless_win)
+    set_colors_enabled(False)
+
+    cli.ThemeScreen(app).spin_theme_ACTION()
+
+    assert app.theme_name == Theme.list_all()[0]
+
+
+def test_the_picker_header_names_mono_while_colour_is_off(headless_win):
+    app = make_app(headless_win)
+    app.theme_name = cli.MONO_THEME
+    set_colors_enabled(False)
+
+    cli.ThemeScreen(app).draw_screen()
+
+    assert 'Mono' in ' '.join(headless_win.head.texts)
 
 
 def test_a_failing_store_never_breaks_the_cycle(headless_win):
@@ -237,6 +288,24 @@ def test_initial_theme_prefers_cli_then_saved_then_default():
     # A one-shot CLI choice does not overwrite the remembered one.
     assert Theme.initial('nord', prefs) == 'nord'
     assert UiPrefs().get('theme') == 'gruvbox'
+
+
+def test_initial_choice_preserves_a_remembered_mono():
+    """``Theme.initial`` would resolve mono to default; grub-wiz must not."""
+    prefs = UiPrefs()
+    prefs.save('mono')
+
+    assert cli.initial_theme_choice(None, prefs) == cli.MONO_THEME
+    # A one-shot --theme still wins without changing what was remembered.
+    assert cli.initial_theme_choice('nord', prefs) == 'nord'
+    assert UiPrefs().get('theme') == 'mono'
+
+
+def test_initial_choice_still_degrades_a_stale_theme():
+    prefs = UiPrefs()
+    prefs.save('a-theme-that-was-removed')
+
+    assert cli.initial_theme_choice(None, prefs) == 'default'
 
 
 def test_stale_saved_theme_degrades_to_the_default():

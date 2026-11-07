@@ -14,10 +14,20 @@ from console_window import Theme, colors_enabled, set_colors_enabled
 from grub_wiz import main as main_module
 
 
-def apply_policy(no_color=False, theme=None):
+class FakePrefs:
+    """The ``UiPrefs`` surface the seeding hook reads."""
+
+    def __init__(self, remembered=None):
+        self.remembered = remembered
+
+    def load(self):
+        return self.remembered
+
+
+def apply_policy(no_color=False, theme=None, prefs=None):
     """Call the seeding hook with the shape argparse hands the application."""
     main_module.apply_color_policy(
-        SimpleNamespace(no_color=no_color, theme=theme))
+        SimpleNamespace(no_color=no_color, theme=theme), prefs)
 
 
 def test_the_application_seeds_the_switch_from_the_parsed_flags():
@@ -51,6 +61,45 @@ def test_the_environment_convention_is_honoured(monkeypatch):
 def test_no_options_means_colour_on():
     """Tests and embedded use pass no namespace at all."""
     main_module.apply_color_policy(None)
+    assert colors_enabled() is True
+
+
+def test_a_remembered_mono_choice_starts_with_colour_off():
+    apply_policy(prefs=FakePrefs('mono'))
+    assert colors_enabled() is False
+
+
+def test_an_explicit_theme_overrides_a_remembered_mono():
+    """A one-run ``--theme`` is a request for colour, like passing it fresh."""
+    apply_policy(theme='nord', prefs=FakePrefs('mono'))
+    assert colors_enabled() is True
+
+
+def test_no_color_wins_over_a_remembered_colour_theme():
+    apply_policy(no_color=True, prefs=FakePrefs('nord'))
+    assert colors_enabled() is False
+
+
+def test_a_remembered_palette_keeps_colour_on():
+    apply_policy(prefs=FakePrefs('nord'))
+    assert colors_enabled() is True
+
+
+def test_a_broken_store_degrades_to_colour_on():
+    """A cosmetic preference must never keep the editor from starting."""
+
+    class Broken:
+        @staticmethod
+        def load():
+            raise OSError('preferences are unreadable')
+
+    apply_policy(prefs=Broken())
+    assert colors_enabled() is True
+
+
+def test_a_non_string_remembered_choice_degrades_to_colour_on():
+    """A hand edit can put anything in the file; only names mean anything."""
+    apply_policy(prefs=FakePrefs(['not', 'a', 'theme']))
     assert colors_enabled() is True
 
 

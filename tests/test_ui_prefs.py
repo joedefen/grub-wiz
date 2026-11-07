@@ -37,6 +37,15 @@ def test_set_persists_and_a_new_instance_reads_it(isolated_user_config_dir):
     assert UiPrefs().get('theme') == 'nord'
 
 
+def test_mono_is_remembered_like_any_other_choice(isolated_user_config_dir):
+    """``mono`` is grub-wiz's pseudo-theme and lives in the same field."""
+    UiPrefs().save('mono')
+
+    assert UiPrefs().load() == 'mono'
+    stored = YAML().load(prefs_path(isolated_user_config_dir).read_text(encoding='utf-8'))
+    assert stored == {'theme': 'mono'}
+
+
 def test_setting_the_same_value_twice_is_a_noop(isolated_user_config_dir):
     prefs = UiPrefs()
     prefs.set('theme', 'nord')

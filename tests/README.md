@@ -25,7 +25,8 @@ tests/
 ├── test_sync_check.py                # /etc/default/grub vs generated grub.cfg mtimes
 ├── test_canned_config_loading.py     # Custom-config loading and fallbacks
 ├── test_warn_db_persistence.py       # Warning DB formats and write failures
-├── test_ui_prefs.py                  # Remembered theme: YAML boundary
+├── test_ui_prefs.py                  # Remembered theme (including mono): YAML boundary
+├── test_appearance.py                # Startup colour switch and remembered choice
 ├── test_glyphs.py                    # Unicode/ASCII glyphs and terminal checks
 ├── test_theme_picker.py              # Theme screen, persistence, help notes
 ├── test_main_helpers.py              # Helpers in main.py, on a headless window
@@ -38,14 +39,20 @@ tests/
 
 ## Running Tests
 
-From the project root directory, with the package and dev dependencies
-installed:
+`.venv` is the editable/debug environment for this tree: the package installed
+with `pip install -e ".[dev]"`, its runtime dependencies, and the release gate's
+tool floors. It is made by `bt penv`, from the project root:
 
 ```bash
-# Recommended: install the package plus test dependencies, then run pytest
-python3 -m pip install -e ".[dev]"
-python3 -m pytest
+bt penv                     # rebuild .venv: editable package + dev tools
+.venv/bin/python -m pytest
 ```
+
+`bt penv` does not touch `~/.local/bin`, so a released `grub-wiz` keeps running
+while you work. `bt edit` is the command that makes `~/.local/bin/grub-wiz` run
+this tree instead, and `bt prod` / `bt test` hand it back to pipx (the release).
+`bt status` reports which mode is active, the editable `.venv`, and the
+interpreter to select in VS Code (`.venv/bin/python`).
 
 The same suite can also be run without installation (pytest discovers the
 package via `pythonpath = ["."]` in `pyproject.toml`). The individual scripts
@@ -81,7 +88,7 @@ GitHub Actions runs the suite on every push to `main`/`dev` and on every pull
 request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
 
 - Python 3.10, 3.11, 3.12 and 3.13 are tested on `ubuntu-24.04`. 3.10 is the
-  minimum supported version, imposed by the pinned `console-window==2.1.3`
+  minimum supported version, imposed by the pinned `console-window==2.2.2`
   (`Requires-Python: >=3.10`) and matched by `requires-python` in
   [`pyproject.toml`](../pyproject.toml).
 - The workflow runs the same three gate commands `./bless` runs -- `ruff check`,
@@ -282,7 +289,16 @@ set value survives into a new instance, an unchanged value does not rewrite the
 file, and corrupt YAML, a non-mapping document, a read error and a failed write
 all degrade to "works for this session" (the last one keeps the value in
 memory and reports it) instead of aborting start-up. `delete()` removes the file
-and treats a second delete as "nothing to do".
+and treats a second delete as "nothing to do". `mono` round-trips like any other
+choice, because it is stored in the same field.
+
+### `test_appearance.py`
+
+Covers grub-wiz's start-up seeding of `console_window.appearance`: the parsed
+`--no-color`/`--theme` flags, the `NO_COLOR` convention, and the remembered
+choice. A remembered `mono` starts with colour off, an explicit `--theme`
+overrides it for the run, `--no-color` beats a remembered palette, and a broken
+preferences store degrades to colour on instead of aborting start-up.
 
 ### `test_glyphs.py`
 
@@ -302,11 +318,15 @@ prose and parameter values alone (`Grüße`, `GRUB_CMDLINE_LINUX=...`), and
 Covers the COLOR THEME screen built by `console_window.Theme`: it derives from
 `GrubWizScreen` (so ESC and `?` keep working there), `t` cycles to the next
 theme, wraps around, applies the theme to the live window, and remembers it
-through `PREFS_THEME_STORE` → `UiPrefs`. Also pins that a failing store never
-breaks the cycle, that the picker key is absent from the EDIT header but
+through `PREFS_THEME_STORE` → `UiPrefs`. The cycle is every library palette and
+then grub-wiz's `mono` pseudo-theme: entering `mono` turns colour off and saves
+the choice, leaving it restores colour and a palette, and the header names the
+mode through the library's `theme_label()` hook. Also pins that a failing store
+never breaks the cycle, that the picker key is absent from the EDIT header but
 present on the help screen together with the font check, `--theme`/saved/default
-precedence via `Theme.initial()`, a stale saved theme degrading to the default,
-and that the HELP and THEME screens paint only ASCII rows in ASCII mode.
+precedence (preserving a remembered `mono`), a stale saved theme degrading to
+the default, and that the HELP and THEME screens paint only ASCII rows in ASCII
+mode.
 
 ### `test_cli_branches.py`
 

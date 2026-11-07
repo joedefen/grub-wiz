@@ -20,7 +20,7 @@
   -   *Full backup system*: Tagged, timestamped backups with easy restore and comparison, pruned automatically to the newest 24 [V2 improved backup]
   -   *Lightweight TUI*: Works everywhere—local, SSH, or minimal environments
   -   *Respects existing config*: Unknown parameters are preserved with minimal validation
-  -   *Readable on any screen*: Seven color themes (`T` opens the picker, `t` cycles them, and the choice is remembered) plus `--ascii`, which swaps the Unicode symbols for plain ASCII when a font cannot draw them [V2 addition].
+  -   *Readable on any screen*: Seven color palettes plus a `mono` mode (`T` opens the picker, `t` cycles them, and the choice is remembered) plus `--ascii`, which swaps the Unicode symbols for plain ASCII when a font cannot draw them [V2 addition].
 
 * **How It Works**
   -   Back up first: on startup, GRUB's current defaults are backed up (tagged and checksummed) if they are unique
@@ -220,13 +220,14 @@ Finally, we show the Warnings Configuration Screen.  Here is a short snippet:
 Every possible warning (currently about 50) is shown on the Warning Configuration Screen. You can inhibit and allow warnings as you please. More often, you probably will inhibit/allow warnings on the Review Screen as they arise and you wish to dismiss it.
 
 ##### COLOR THEMES AND SYMBOLS
-Press `T` from any screen to open the COLOR THEME picker, then `t` to cycle through the palettes (`default`, `dark-mono`, `light-mono`, `solarized-dark`, `solarized-light`, `gruvbox`, `nord`) while the labelled swatches change live. `ESC` returns to where you were.
+Press `T` from any screen to open the COLOR THEME picker, then `t` to cycle through the palettes (`default`, `dark-mono`, `light-mono`, `solarized-dark`, `solarized-light`, `gruvbox`, `nord`) and finally `mono`, while the labelled swatches change live. `ESC` returns to where you were.
 
 The picker's key is deliberately kept out of the header lines — headers are for the steps you take while editing — so the help screen (`?`) is where you look it up.
 
 * The `default` theme follows your terminal's own colors. If warnings, stars or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
-* `--theme NAME` picks a theme for one run without changing the remembered choice.
-* `grub-wiz --no-color` draws the semantic roles — the warning blocks, the guidance text, the value a change replaces and the commit question on the REVIEW screen — as bold/reverse text instead of colour for that run. The `NO_COLOR` environment variable does the same, unless you pass an explicit `--theme`. Picking a theme with `T`/`t` turns colour back on.
+* `--theme NAME` picks a palette for one run without changing the remembered choice.
+* `grub-wiz --no-color` draws the semantic roles — the warning blocks, the guidance text, the value a change replaces and the commit question on the REVIEW screen — as bold/reverse text instead of colour for that run. The `NO_COLOR` environment variable does the same, unless you pass an explicit `--theme`. Picking a palette with `T`/`t` turns colour back on.
+* The picker's `mono` entry is the remembered form of that switch: picking it saves the mode, so the next start is monochrome too, and picking any palette turns colour back on. `--no-color` itself stays a one-run choice.
 
 The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). That handling now lives in the [`console-window`](../console-window) library, so grub-wiz only declares its vocabulary and every console-window app benefits from the same behaviour:
 
@@ -248,7 +249,7 @@ If the symbol line looks right, there is nothing to do. If any symbol is a box o
 |---|---|---|
 | `*.bak` | Backups of `/etc/default/grub` (tag optional, newest 24 kept) | Yes (loses restore/compare history) |
 | `warn-db.yaml` | Inhibited/allowed warnings and severities | Yes (resets warning preferences) |
-| `ui-prefs.yaml` | Remembered color theme (`T` picker) | Yes (returns to the `default` theme) |
+| `ui-prefs.yaml` | Remembered color theme, including `mono` (`T` picker) | Yes (returns to the `default` theme) |
 | `custom_config.yaml` | Your optional custom parameter definitions | Keep |
 | `canned_config.yaml` | Reference template for the custom-config workflow | Yes (recreated on the next start) |
 

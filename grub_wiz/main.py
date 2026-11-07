@@ -19,6 +19,7 @@ import textwrap
 import traceback
 import re
 import unicodedata
+import logging
 import curses as cs
 from argparse import ArgumentParser
 from pathlib import Path
@@ -26,8 +27,8 @@ from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
                             InlineConfirmation, BasicTextScreen, BasicHelpScreen,
-                            Theme, resolve_appearance, semantic_attr,
-                            set_colors_enabled)
+                            Theme, colors_enabled, resolve_appearance,
+                            semantic_attr, set_colors_enabled)
 from console_window import cli as display_cli
 from console_window import help as display_help
 from . import __version__
@@ -71,25 +72,94 @@ QUIT_KEY = 0x3
 BACKUP_TAG_PATTERN = re.compile(r'^[-_+~A-Za-z0-9]+$')
 
 
+logger = logging.getLogger(__name__)
+
 #: The attribute for a semantic theme role, as the screens call it.  The roles
 #: themselves -- and the ``--no-color`` switch that turns them into attributes
 #: -- live in console-window's appearance module; binding the name here keeps
 #: every draw site reading the same.
 theme_attr = semantic_attr
 
+#: This app's pseudo-theme: no palette of its own, just the semantic roles
+#: resolved to attributes.  It deliberately stays out of ``Theme.THEMES``: the
+#: library only ever sees a palette name, while the picker and the preference
+#: file are the two places that know ``mono`` exists.
+MONO_THEME = 'mono'
 
-def apply_color_policy(cli_opts):
-    """Seed the colour switch from ``--no-color``, ``--theme`` and ``NO_COLOR``.
+#: What ``t`` cycles through: every library palette, then the mono mode.  The
+#: order is stable, and ``mono`` sits last so the palettes read as one run.
+THEME_CYCLE = (*Theme.list_all(), MONO_THEME)
+
+
+def normalize_theme_choice(name):
+    """Split a remembered choice into ``resolve_appearance``'s two inputs.
+
+    ``mono`` is this app's pseudo-theme, so it is normalized the way
+    ``console_window.appearance`` documents: no palette name (``''``) and
+    "color off".  Anything else is a palette name with color on; a stale name
+    still resolves to the library default inside ``resolve_appearance``.
+    """
+    if name == MONO_THEME:
+        return '', False
+    return name or '', True
+
+
+def initial_theme_choice(cli_theme, prefs=None):
+    """The choice to start on, preserving this app's ``mono`` pseudo-theme.
+
+    ``Theme.initial()`` knows only library palettes, so it would resolve a
+    remembered ``mono`` to ``default`` and forget that colour was off.  An
+    explicit ``--theme`` still wins, and a stale remembered palette still
+    degrades to ``default``.
+    """
+    if cli_theme:
+        return MONO_THEME if cli_theme == MONO_THEME else Theme.resolve(cli_theme)
+
+    remembered = ''
+    if prefs is not None:
+        try:
+            remembered = prefs.load()
+        # A broken preference store must not stop the editor from starting.
+        except Exception:
+            remembered = ''
+    if not isinstance(remembered, str):
+        remembered = ''
+    if remembered == MONO_THEME:
+        return MONO_THEME
+    return Theme.initial(None, prefs)
+
+
+def apply_color_policy(cli_opts, prefs=None):
+    """Seed the colour switch from the flags, environment and remembered choice.
 
     Called while the application is being constructed, before the first frame,
     so colour is decided for the run instead of being painted and then
     stripped.  The precedence (flag, explicit theme, ``NO_COLOR``, remembered
     choice) is console-window's, so every app on the library decides the same
-    way.  A missing ``cli_opts`` (tests, embedded use) means "colour on".
+    way.  A missing ``cli_opts`` (tests, embedded use) means "colour on"; no
+    ``prefs`` means "nothing remembered".
     """
+    cli_theme = getattr(cli_opts, 'theme', None) if cli_opts else None
+    no_color = bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False
+
+    remembered = ''
+    if prefs is not None:
+        try:
+            remembered = prefs.load()
+        # A cosmetic preference must never keep the editor from starting.
+        except Exception:
+            remembered = ''
+    if not isinstance(remembered, str):
+        remembered = ''
+    saved_theme, saved_colors = normalize_theme_choice(remembered)
+
+    if cli_theme == MONO_THEME:
+        # The parser's --theme choices belong to console-window, so this is
+        # only reachable from embedded callers; it still means the same thing.
+        cli_theme, no_color = None, True
+
     _theme, colors = resolve_appearance(
-        getattr(cli_opts, 'theme', None) if cli_opts else None,
-        bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False)
+        cli_theme, no_color, saved_theme, saved_colors)
     set_colors_enabled(colors)
 
 
@@ -1438,8 +1508,9 @@ class _PrefsThemeStore:
     instead of holding a reference captured here.  A missing application (a
     bare screen in a test) means "nothing remembered", which is not an error.
 
-    Saving also lifts a ``--no-color`` start: choosing a theme is a request for
-    colour, and the picker has to be able to get back out of a monochrome run.
+    The choice is stored verbatim, including grub-wiz's ``mono`` pseudo-theme.
+    Deciding colour here would make a remembered ``mono`` impossible, so that
+    decision belongs to the picker; this class only persists what it is given.
     """
 
     @staticmethod
@@ -1451,31 +1522,80 @@ class _PrefsThemeStore:
         return prefs.load() if prefs is not None else None
 
     def save(self, name):
-        set_colors_enabled(True)
         prefs = self._prefs()
         if prefs is None:
             return
-        # ``win.theme`` is authoritative: curses installs one palette per
-        # terminal and the window records the name it resolved, so storing
-        # anything else could disagree with what the user just saw.
-        GrubWiz.singleton.theme_name = Theme.resolve(name)
-        prefs.save(GrubWiz.singleton.theme_name)
+        # ``theme_name`` is the choice (a palette or ``mono``); ``win.theme``
+        # remains the palette installed underneath it.
+        GrubWiz.singleton.theme_name = name
+        prefs.save(name)
 
 
 #: One store object, shared by the CLI help text and the picker.
 PREFS_THEME_STORE = _PrefsThemeStore()
 
+
 # The theme picker is console-window's: it draws the swatches, applies the
 # choice to the live window, discovers the key this app bound to ``spin_theme``
 # for its hint line, and remembers the result through the store above.
 # Deriving it from GrubWizScreen (rather than from Screen) keeps the app-level
-# action set, so ESC and ? still work on that screen.
-ThemeScreen = Theme.create_picker_screen(
-    GrubWizScreen,
-    cycle_key='t',
-    store=PREFS_THEME_STORE,
-    note='The choice is remembered for the next start.',
-)
+# action set, so ESC and ? still work on that screen.  The subclass below adds
+# grub-wiz's one pseudo-theme, ``mono``, through the library's documented
+# ``theme_label()`` hook.
+class ThemeScreen(Theme.create_picker_screen(  # type: ignore[misc]
+        GrubWizScreen,
+        cycle_key='t',
+        store=PREFS_THEME_STORE,
+        note='The choice is remembered for the next start.')):
+    """COLOR THEME picker, cycling every palette and then ``mono``.
+
+    ``mono`` is not a library palette: it keeps the default palette installed
+    but resolves the semantic roles to attributes (bold/reverse/plain), which
+    is exactly what a monochrome terminal or ``--no-color`` shows.  The header
+    names it through ``theme_label()`` so the label and the swatches agree.
+    """
+
+    def theme_label(self, theme_name):
+        """Name the choice in effect; ``mono`` is anything with colour off."""
+        if not colors_enabled():
+            return 'Mono'
+        return super().theme_label(theme_name)
+
+    def spin_theme_ACTION(self):
+        """Cycle the palettes, then ``mono``, and remember the choice."""
+        current = getattr(self.app, 'theme_name', None)
+        if current not in THEME_CYCLE:
+            current = Theme.resolve(self.app.win.theme)
+        if not colors_enabled():
+            # A --no-color run is already on mono, whatever palette is
+            # installed underneath it, so cycling continues from there.
+            current = MONO_THEME
+
+        value = THEME_CYCLE[
+            (THEME_CYCLE.index(current) + 1) % len(THEME_CYCLE)]
+        self._apply_choice(value)
+        self._remember(value)
+
+    def _apply_choice(self, value):
+        """Install *value*: a palette with colour, or mono without it."""
+        win = self.app.win
+        if value == MONO_THEME:
+            set_colors_enabled(False)
+            # A neutral background keeps mono independent of the palette that
+            # happened to be installed before it.
+            Theme.apply_to(win, Theme.resolve('default'))
+        else:
+            set_colors_enabled(True)
+            Theme.apply_to(win, value)
+        self.app.theme_name = value
+
+    @staticmethod
+    def _remember(value):
+        """Persist the choice; a failing store never breaks the cycle."""
+        try:
+            PREFS_THEME_STORE.save(value)
+        except Exception:
+            logger.warning('could not remember theme %r', value, exc_info=True)
 
 
 class HelpScreen(GrubWizScreen, BasicHelpScreen):
@@ -1707,12 +1827,15 @@ class GrubWiz:
         # explicit --theme, else the remembered choice, else the
         # terminal-default theme.  A stale name (a theme the library dropped, a
         # hand-edited preference) degrades instead of failing to draw.
-        self.theme_name = Theme.initial(
+        # ``theme_name`` is the *choice* and may be grub-wiz's ``mono``
+        # pseudo-theme; ``win.theme`` stays the palette actually installed.
+        self.theme_name = initial_theme_choice(
             getattr(cli_opts, 'theme', None) if cli_opts else None, self.prefs)
         # Colour is decoration, never information: --no-color (or NO_COLOR,
         # unless an explicit --theme asks for colour) resolves the semantic
-        # roles to attributes for this run.
-        apply_color_policy(cli_opts)
+        # roles to attributes for this run, and a remembered ``mono`` does the
+        # same on start-up.
+        apply_color_policy(cli_opts, self.prefs)
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
@@ -1929,9 +2052,11 @@ class GrubWiz:
             answer_show_redraws=self.cli_opts.answer_timeout_debug,
             min_cols_rows=(70, 10),  # Allow smaller terminals (down from default 20 rows)
             taken_nav_keys=TAKEN_NAV_KEYS,
-            # Seed the window with the remembered (or --theme) choice; the
-            # theme picker changes it later through win.set_theme().
-            theme=self.theme_name,
+            # Seed the window with the remembered (or --theme) palette; the
+            # theme picker changes it later through win.set_theme().  ``mono``
+            # is a choice, not a library palette, so it resolves to the default
+            # palette underneath with the colour switch turned off.
+            theme=Theme.resolve(self.theme_name),
         )
 
         # Create ConsoleWindow first (needed by screen objects)
