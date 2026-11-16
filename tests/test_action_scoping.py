@@ -21,8 +21,8 @@ VALUE_SCREENS = {cli.HOME_ST, cli.REVIEW_ST}
 WARN_ACTION_SCREENS = {cli.HOME_ST, cli.REVIEW_ST, cli.WARN_ST}
 
 # (attr, key) for every action registered by GrubWiz.setup_win().
+# ``quit`` and ``escape`` are registered by OptionSpinner's constructor now.
 ACTIONS = [
-    ('escape', 27),
     ('help_mode', ord('?')),
     ('cycle_next', ord(' ')),
     ('cycle_prev', ord('C')),
@@ -53,6 +53,10 @@ class FakeWin:
         self.pick_pos = 0
         self.scroll_pos = 0
         self.free_scroll = False
+
+    @staticmethod
+    def _adopt_view(view):
+        """3.0 makes each screen current by adopting it on the window."""
 
 
 def _screen(cls):
@@ -257,7 +261,18 @@ def test_navigation_keys_remain_available_for_cursor_movement():
 
 def test_invalid_action_arguments_are_rejected():
     """Duplicate attributes and navigation keys fail at registration."""
-    _win, _screens, stack, _spinner = make_ui()
+    # A fresh stack: a ScreenStack owns at most one spinner.
+    win = FakeWin()
+    screens = {num: _screen(cls) for num, cls in (
+        (cli.HOME_ST, cli.HomeScreen), (cli.REVIEW_ST, cli.ReviewScreen),
+        (cli.RESTORE_ST, cli.RestoreScreen), (cli.VIEW_ST, cli.ViewScreen),
+        (cli.COMPARE_ST, cli.CompareScreen), (cli.WARN_ST, cli.WarnScreen),
+        (cli.HELP_ST, cli.HelpScreen), (cli.THEME_ST, cli.ThemeScreen))}
+    app = SimpleNamespace()
+    for screen in screens.values():
+        screen.gw = app
+        screen.app = app
+    stack = ScreenStack(win, None, cli.SCREENS, screens)
     opts = ConsoleWindowOpts(taken_nav_keys=cli.TAKEN_NAV_KEYS)
     spinner = OptionSpinner(stack=stack, nav_keys=opts.nav_keys)
     spinner.add_key('write', 'write action', genre='action', keys=[ord('w')])

@@ -22,6 +22,7 @@ from grub_wiz.main import (
     QUIT_KEY,
     RESTORE_ST,
     GrubWiz,
+    GrubWizScreen,
     ReviewScreen,
     Tab,
     display_width,
@@ -46,11 +47,11 @@ def test_truncate_to_width_preserves_short_text():
 def test_truncate_to_width_respects_cell_budget():
     truncated = truncate_to_width('abcdef', 4)
 
-    assert truncated == 'abc▶'
+    assert truncated == 'abc▸'
     assert display_width(truncated) <= 4
 
     wide = truncate_to_width('界界界', 4)
-    assert wide == '界▶'
+    assert wide == '界▸'
     assert display_width(wide) <= 4
 
 
@@ -205,12 +206,14 @@ def test_tag_prompt_is_an_item_line_seeded_with_the_current_tag(
     assert gw.request_backup_tag(chosen, seed='~Timeout+1') is True
 
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│')
+            == '🔔  Edit tag, then ENTER or ESC: ~Timeout+1│')
     assert gw.confirm_scope == 'item'
     assert gw.confirm_item_key == chosen
     # The prompt is drawn under the backup it renames, not in the header.
-    gw.add_confirm_item_line(chosen)
-    assert gw.win.body.texts == ['⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│']
+    screen = GrubWizScreen(gw)
+    screen.clear()
+    screen.add_confirm_item_line(chosen)
+    assert gw.win.body.texts == ['🔔  Edit tag, then ENTER or ESC: ~Timeout+1│']
 
 
 def test_tag_answer_renames_the_backup_and_refreshes_the_list(
@@ -266,7 +269,7 @@ def test_invalid_tag_is_asked_again_with_the_rejected_text_editable(
 
     assert gw.win.prompt_active is True
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️  Invalid tag, then ENTER or ESC: bad-tag!│')
+            == '🔔  Invalid tag, then ENTER or ESC: bad-tag!│')
     assert gw.refreshed == []
 
 
@@ -559,10 +562,12 @@ def test_theme_attr_is_nothing_when_curses_is_not_initialised(monkeypatch):
     assert main_module.theme_attr(main_module.Theme.WARNING) == 0
 
 
-def test_theme_attr_is_nothing_on_a_monochrome_terminal(monkeypatch):
+def test_theme_attr_uses_the_mono_role_on_a_monochrome_terminal(monkeypatch):
+    """3.1 degrades a palette role to its MONO_ROLES attribute, not to 0."""
     monkeypatch.setattr(main_module.cs, 'has_colors', lambda: False)
 
-    assert main_module.theme_attr(main_module.Theme.WARNING) == 0
+    assert (main_module.theme_attr(main_module.Theme.WARNING)
+            == cs.A_BOLD)
 
 
 def test_theme_attr_is_the_pair_when_colour_is_available(monkeypatch):
@@ -579,12 +584,14 @@ def test_item_prompt_defaults_to_bold_and_takes_a_colour_override(
     chosen = Path('20261025-083036-s559DCA.~Timeout+1.bak')
     gw = make_tag_gw(make_headless_win())
     gw.request_backup_tag(chosen, seed='~Timeout+1')
+    screen = GrubWizScreen(gw)
 
-    gw.add_confirm_item_line(chosen)
+    screen.clear()
+    screen.add_confirm_item_line(chosen)
     assert gw.win.body.text_attrs[0][0][0] == cs.A_BOLD
 
-    gw.win.clear()
+    screen.clear()
     colour = cs.A_BOLD | 0x0200
-    gw.add_confirm_item_line(chosen, attr=colour)
+    screen.add_confirm_item_line(chosen, attr=colour)
 
     assert gw.win.body.text_attrs[0][0][0] == colour

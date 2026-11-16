@@ -47,8 +47,12 @@ class GrubFile:
     It preserves unmanaged lines and correctly handles comment detection (ignoring
     # inside quotes) and the 'Zap' (remove/reset to default) action.
     """
-    COMMENT = '∎' # "value" of comment lines
-    ABSENT = '≡' # "value" of absent lines
+    # Plain-ASCII sentinels: these are *values* the UI can draw in the value
+    # column and in a "was" line, so they must degrade honestly and must not
+    # rely on a glyph outside console-window's catalog.  The spellings match
+    # the config's own ``#comment`` / ``#absent`` documentation sentinels.
+    COMMENT = '#comment' # "value" of comment lines
+    ABSENT = '#absent' # "value" of absent lines
     # Keep a single source of truth for the fallback path (audit M10);
     # ``DistroVars.etc_grub`` is the value the application actually uses.
     std_location = DEFAULT_ETC_GRUB

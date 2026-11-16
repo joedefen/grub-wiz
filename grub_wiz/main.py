@@ -27,8 +27,7 @@ from types import SimpleNamespace
 from console_window import (OptionSpinner, ConsoleWindow, ConsoleWindowOpts,
                             Screen, ScreenStack, Context, IncrementalSearchBar,
                             InlineConfirmation, BasicTextScreen, BasicHelpScreen,
-                            Theme, colors_enabled, resolve_appearance,
-                            semantic_attr, set_colors_enabled)
+                            Theme, Appearance, semantic_attr)
 from console_window import cli as display_cli
 from console_window import help as display_help
 from . import __version__
@@ -51,16 +50,14 @@ HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST, THEME_ST 
     0, 1, 2, 3, 4, 5, 6, 7)
 SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP THEMES'.split() # screen names
 
-# Navigation keys this app reserves for its own actions, with the labels the
-# console-window navigation help should print for them.  Left/right cycle the
+# Navigation keys this app reserves for its own actions.  Left/right cycle the
 # selected value, so the window takes the cursor keys for the app rather than
 # mutating console-window's global NAVIGATION_KEYS: the library keeps its
-# defaults for every other window in the process, and the help screen stops
-# advertising keys it no longer handles.
-TAKEN_NAV_KEYS = {
-    cs.KEY_LEFT: 'prev value',
-    cs.KEY_RIGHT: 'next value',
-}
+# defaults for every other window in the process.  In 3.1 this is an ordered
+# *list* of key codes -- a taken key is withdrawn from navigation and pruned
+# from the generated help's ``action: keys`` chunk, never documented a second
+# time -- and the app advertises the new meaning in its own option descriptions.
+TAKEN_NAV_KEYS = [cs.KEY_LEFT, cs.KEY_RIGHT]
 
 # The ETX key code, i.e. what Ctrl-C becomes once console-window delivers it as
 # a key instead of letting SIGINT kill the process.  ``q`` and Ctrl-C are the
@@ -80,41 +77,15 @@ logger = logging.getLogger(__name__)
 #: every draw site reading the same.
 theme_attr = semantic_attr
 
-#: This app's pseudo-theme: no palette of its own, just the semantic roles
-#: resolved to attributes.  It deliberately stays out of ``Theme.THEMES``: the
-#: library only ever sees a palette name, while the picker and the preference
-#: file are the two places that know ``mono`` exists.
-MONO_THEME = 'mono'
+def initial_theme_name(cli_theme, prefs=None):
+    """The canonical theme to start on, with ``mono`` as a real theme.
 
-#: What ``t`` cycles through: every library palette, then the mono mode.  The
-#: order is stable, and ``mono`` sits last so the palettes read as one run.
-THEME_CYCLE = (*Theme.list_all(), MONO_THEME)
-
-
-def normalize_theme_choice(name):
-    """Split a remembered choice into ``resolve_appearance``'s two inputs.
-
-    ``mono`` is this app's pseudo-theme, so it is normalized the way
-    ``console_window.appearance`` documents: no palette name (``''``) and
-    "color off".  Anything else is a palette name with color on; a stale name
-    still resolves to the library default inside ``resolve_appearance``.
+    console-window 3.1 unified the two axes: ``mono`` is a palette-less theme,
+    ``Appearance.resolve_appearance()`` returns one name, and
+    ``Theme.set_active()`` is what synchronizes the color switch.  A remembered
+    ``mono`` therefore survives a restart without this app keeping a
+    pseudo-theme, and a stale name still degrades to ``default``.
     """
-    if name == MONO_THEME:
-        return '', False
-    return name or '', True
-
-
-def initial_theme_choice(cli_theme, prefs=None):
-    """The choice to start on, preserving this app's ``mono`` pseudo-theme.
-
-    ``Theme.initial()`` knows only library palettes, so it would resolve a
-    remembered ``mono`` to ``default`` and forget that colour was off.  An
-    explicit ``--theme`` still wins, and a stale remembered palette still
-    degrades to ``default``.
-    """
-    if cli_theme:
-        return MONO_THEME if cli_theme == MONO_THEME else Theme.resolve(cli_theme)
-
     remembered = ''
     if prefs is not None:
         try:
@@ -124,43 +95,11 @@ def initial_theme_choice(cli_theme, prefs=None):
             remembered = ''
     if not isinstance(remembered, str):
         remembered = ''
-    if remembered == MONO_THEME:
-        return MONO_THEME
-    return Theme.initial(None, prefs)
-
-
-def apply_color_policy(cli_opts, prefs=None):
-    """Seed the colour switch from the flags, environment and remembered choice.
-
-    Called while the application is being constructed, before the first frame,
-    so colour is decided for the run instead of being painted and then
-    stripped.  The precedence (flag, explicit theme, ``NO_COLOR``, remembered
-    choice) is console-window's, so every app on the library decides the same
-    way.  A missing ``cli_opts`` (tests, embedded use) means "colour on"; no
-    ``prefs`` means "nothing remembered".
-    """
-    cli_theme = getattr(cli_opts, 'theme', None) if cli_opts else None
-    no_color = bool(getattr(cli_opts, 'no_color', False)) if cli_opts else False
-
-    remembered = ''
-    if prefs is not None:
-        try:
-            remembered = prefs.load()
-        # A cosmetic preference must never keep the editor from starting.
-        except Exception:
-            remembered = ''
-    if not isinstance(remembered, str):
-        remembered = ''
-    saved_theme, saved_colors = normalize_theme_choice(remembered)
-
-    if cli_theme == MONO_THEME:
-        # The parser's --theme choices belong to console-window, so this is
-        # only reachable from embedded callers; it still means the same thing.
-        cli_theme, no_color = None, True
-
-    _theme, colors = resolve_appearance(
-        cli_theme, no_color, saved_theme, saved_colors)
-    set_colors_enabled(colors)
+    return Theme.resolve(Appearance.resolve_appearance(
+        cli_theme=cli_theme or None,
+        saved_theme=remembered,
+        environ=os.environ,
+    ))
 
 
 class Tab:
@@ -339,11 +278,93 @@ class GrubWizScreen(Screen):
         super().__init__(grub_wiz)
         self.gw = self.app  # Backward compatibility: gw is an alias for app
 
+    # --- content helpers ---------------------------------------------------
+    #
+    # console-window 3.0 moved the content writers from the window onto Screen:
+    # ``self.add_body()`` etc. target *this* screen, and ``clear()`` is what
+    # adopts it on the window.  These wrappers add this app's policy on top.
+
+    def add_fancy_header(self, line):
+        """Add a header row using the app's current fancy-header mode.
+
+        While an inline prompt is live every key is routed to that prompt, so
+        the hints can no longer be acted on; dimming the whole band says so and
+        leaves the prompt as the only full-intensity line.
+        """
+        mode = self.gw.spins.fancy_headers
+        line_attr = cs.A_DIM if self.win.prompt_active else None
+        super().add_fancy_header(line, mode=mode, line_attr=line_attr)
+
+    def add_confirm_header(self, attr=None):
+        """Draw a program/screen-scoped confirmation as the last header line."""
+        if self.gw.confirm_scope != 'header':
+            return
+        self.add_prompt_header(
+            attr=cs.A_BOLD if attr is None else attr, align='center')
+
+    def add_confirm_item_line(self, item_key, attr=None, hint_attr=None):
+        """Draw an item-scoped confirmation directly below that item.
+
+        A screen calls this from its body builder after emitting the row whose
+        stable identity is *item_key*.  The prompt and its hint are transient
+        detail rows, not pick targets, so the row the prompt concerns stays
+        selected while it is live.
+        """
+        if self.gw.confirm_scope != 'item':
+            return
+        if self.gw.confirm_item_key != item_key:
+            return
+        self.add_prompt_lines(
+            attr=cs.A_BOLD if attr is None else attr,
+            hint_attr=cs.A_DIM if hint_attr is None else hint_attr)
+
+    def truncate_line(self, line):
+        """Truncate *line* to the window width using cell-aware widths."""
+        return truncate_to_width(line, self.win.cols - 1)
+
+    def add_wrapped_body_line(self, line, indent, is_current, attr=None,
+                              context=None):
+        """Add a body line, wrapping it when it is the selected row.
+
+        *attr* applies to every screen row the line wraps onto.  Returns the
+        number of screen lines added.
+        """
+        if not is_current:
+            self.add_body(self.truncate_line(line), attr=attr, context=context)
+            return 1
+        wid = self.win.cols
+        # textwrap counts code points; subtract the extra cells taken by any
+        # double-width glyphs so a wrapped line cannot overflow the window.
+        excess = display_width(line) - len(line)
+        wrapped = textwrap.fill(line, width=max(wid - 1 - excess, 1),
+                                subsequent_indent=' ' * indent)
+        wraps = wrapped.split('\n')
+        for idx, wrap in enumerate(wraps):
+            # First line gets the context; continuation rows inherit the
+            # parent's visibility but are detail, never pick targets.
+            if idx == 0:
+                self.add_body(wrap, attr=attr, context=context)
+            else:
+                self.add_body(wrap, attr=attr,
+                              context=Context(genre='TRANSIENT',
+                                              pickable=False))
+        return len(wraps)
+
     # App-level navigation actions (available on all screens)
     def escape_ACTION(self):
         """Handle ESC key - navigate back if possible"""
         if self.gw.ss.stack:
             self.gw.navigate_back()
+
+    def quit_ACTION(self):
+        """Quit through the app's unapplied-changes check.
+
+        ``Screen.quit_ACTION`` raises ``SystemExit``; this app has teardown and
+        a discard-confirmation to run first, so it asks the app and lets the
+        main loop own the normal shutdown.
+        """
+        if self.gw.request_quit():
+            self.gw.running = False
 
     def help_mode_ACTION(self):
         """Handle ? key - navigate to help screen"""
@@ -443,7 +464,7 @@ class HomeScreen(GrubWizScreen):
 
     def draw_screen(self):
         """Draw the editable parameter list and its header."""
-        self.win.set_pick_mode(True)
+        self.set_pick_mode(True)
         self.draw_body()
         self.draw_head()
 
@@ -474,7 +495,9 @@ class HomeScreen(GrubWizScreen):
         if len(lines) <= 0:
             return []
         rv = []
-        chars = ['┃'] + ['│'] * (len(lines)-1)
+        # ``┃`` (heavy vertical) is not in console-window's catalog; the
+        # regular box vertical is, and the first/last cells become corners.
+        chars = ['│'] * len(lines)
         if len(chars) >= 2:
             chars[0], chars[-1] = '╭', '╰'
         for idx, line in enumerate(lines):
@@ -523,11 +546,11 @@ class HomeScreen(GrubWizScreen):
 
             # Add blank line before sections (except first visible section)
             if not first_visible_section:
-                win.add_body(' ', context=Context(genre='DECOR'))
+                self.add_body(' ', context=Context(genre='DECOR'))
             first_visible_section = False
 
             # Add section header - DECOR genre makes it non-pickable
-            win.add_body(f'[{section_name}]', context=Context(genre='DECOR'))
+            self.add_body(f'[{section_name}]', context=Context(genre='DECOR'))
 
             # Add visible params
             for param_name in visible_params:
@@ -545,7 +568,7 @@ class HomeScreen(GrubWizScreen):
                     if len(param_lines) > 1:
                         line = line[:win.cols-2] + Glyphs.ellipsis_tail()
                     anchors[win.body.row_cnt] = ('param', param_name, 0)
-                    win.add_body(line, context=Context(genre='param', param_name=param_name))
+                    self.add_body(line, context=Context(genre='param', param_name=param_name))
                     continue
 
                 if target_key is None:
@@ -569,7 +592,7 @@ class HomeScreen(GrubWizScreen):
 
                 # Add parent param line
                 anchors[win.body.row_cnt] = ('param', param_name, 0)
-                win.add_body(emits[0], context=Context(genre='param', param_name=param_name))
+                self.add_body(emits[0], context=Context(genre='param', param_name=param_name))
                 # Add TRANSIENT dropdown lines (auto-visible with parent via
                 # ConsoleWindow) but never navigation stops: otherwise DOWN
                 # lands on a detail row, the redraw drops the dropdown, and a
@@ -580,14 +603,14 @@ class HomeScreen(GrubWizScreen):
                 # continuation stays plain while the advice below it is
                 # coloured.
                 for idx, emit in enumerate(emits[1:], start=1):
-                    win.add_body(emit,
-                                 attr=(theme_attr(Theme.INFO)
-                                       if idx >= param_line_cnt else None),
-                                 context=Context(genre='TRANSIENT',
-                                                 pickable=False))
+                    self.add_body(emit,
+                                  attr=(theme_attr(Theme.INFO)
+                                        if idx >= param_line_cnt else None),
+                                  context=Context(genre='TRANSIENT',
+                                                  pickable=False))
                 # A live inline edit sits at the end of this parameter's block,
                 # so the row above keeps showing the value being replaced.
-                gw.add_confirm_item_line(param_name)
+                self.add_confirm_item_line(param_name)
 
         self.apply_pick_anchors(anchors, target_key)
         return found_current
@@ -605,8 +628,8 @@ class HomeScreen(GrubWizScreen):
         # so this stays within the 70-column minimum.
         destinations = ' [W]arnCfg' if review_screen else ' [R]estore [W]arnCfg'
         header += f' [g]uide={level}  [w]rite-grub   {esc}{destinations} ?:help [q]uit'
-        header += f'  𝚫={len(gw.get_diffs())}'
-        gw.add_fancy_header(header)
+        header += f'  delta={len(gw.get_diffs())}'
+        self.add_fancy_header(header)
         gw.warn_db.write_if_dirty()
 
     def add_common_head2(self, left):
@@ -652,7 +675,7 @@ class HomeScreen(GrubWizScreen):
             # Show search bar (with cursor if active, or just text if not)
             middle += gw.home_search_bar.get_display_string(prefix='  /')
 
-        gw.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
+        self.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
 
     def get_tab(self):
         """ get the tab positions of the print cols """
@@ -755,8 +778,8 @@ class ReviewScreen(HomeScreen):
 
     def draw_screen(self):
         """Draw the review list of changes and warnings."""
-        self.win.set_pick_mode(True)
-        self.add_body()
+        self.set_pick_mode(True)
+        self.draw_body()
         self.add_head()
 
     def add_head(self):
@@ -777,10 +800,10 @@ class ReviewScreen(HomeScreen):
         # line, immediately before the divider, so it reads as a screen-level
         # prompt rather than as part of the selected item.  DANGER: answering
         # it commits the change, the point of no return for the session.
-        gw.add_confirm_header(attr=theme_attr(Theme.DANGER) | cs.A_BOLD)
+        self.add_confirm_header(attr=theme_attr(Theme.DANGER) | cs.A_BOLD)
         # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
-    def add_body(self):
+    def draw_body(self):
         """Build the review list, grouping changed values with their warnings."""
         def add_review_item(param_name, value, old_value=None, heys=None):
             nonlocal reviews
@@ -847,7 +870,7 @@ class ReviewScreen(HomeScreen):
             # Add param lines with Context
             for idx, line in enumerate(param_lines):
                 anchors[self.win.body.row_cnt] = ('param', param_name, idx)
-                self.win.add_body(line, context=Context(genre='param', param_name=param_name))
+                self.add_body(line, context=Context(genre='param', param_name=param_name))
 
             changed = bool(ns.old_value is not None
                            and str(ns.value) != str(ns.old_value))
@@ -855,7 +878,7 @@ class ReviewScreen(HomeScreen):
                 # TRANSIENT line showing old value (detail, not a pick target).
                 # SUCCESS marks it as the value that was in effect: the change
                 # is already good, and this is the line it replaced.
-                self.win.add_body(
+                self.add_body(
                     f'{"└──────── was":>{tab.lwid}}  {ns.old_value}',
                     attr=theme_attr(Theme.SUCCESS),
                     context=Context(genre='TRANSIENT', pickable=False))
@@ -864,15 +887,16 @@ class ReviewScreen(HomeScreen):
                 warn_key = WarnDB.make_key(param_name, hey[1])
                 is_inhibit = gw.warn_db.is_inhibit(warn_key)
                 gw.hidden_stats.warn += int(is_inhibit)
-                stars = Glyphs.star() * len(hey[0])
+                stars = Glyphs.severity() * len(hey[0])
 
                 if not is_inhibit or gw.show_hidden_warns:
                     mark = Glyphs.warn() if is_inhibit else ' '
-                    # Pad the star field by *cell* width (an emoji star is
-                    # two cells), so the message starts at the same column
-                    # for every severity.
-                    star_field = ' ' * max(8 - display_width(stars), 0) + stars
-                    sub_text = f'└─── {mark} {star_field}'
+                    # Reserve four cells for the severity marks, padded by
+                    # *cell* width (the mark is one cell).  The leading dash
+                    # run is four cells longer so the message column does not
+                    # move when the field shrank.
+                    star_field = ' ' * max(4 - display_width(stars), 0) + stars
+                    sub_text = f'└─────── {mark} {star_field}'
                     pad = max(tab.lwid - display_width(sub_text), 0)
                     line = f'{" " * pad}{sub_text}  {hey[1]}'
                     # Add warning line with Context - TRANSIENT keeps it with parent
@@ -885,10 +909,10 @@ class ReviewScreen(HomeScreen):
                     anchors[self.win.body.row_cnt] = ('warn', warn_key, 0)
                     # WARNING is the theme's caution role, so the eye finds a
                     # warning block without reading the severity stars.
-                    gw.add_wrapped_body_line(line, tab.lwid+2,
-                                             warn_selected,
-                                             attr=theme_attr(Theme.WARNING),
-                                             context=Context(genre='warn', warn_key=warn_key))
+                    self.add_wrapped_body_line(line, tab.lwid+2,
+                                               warn_selected,
+                                               attr=theme_attr(Theme.WARNING),
+                                               context=Context(genre='warn', warn_key=warn_key))
 
             if selected and not gw.has_live_item_confirm(param_name):
                 emits = gw.drop_down_lines(param_name)
@@ -898,15 +922,15 @@ class ReviewScreen(HomeScreen):
                 # INFO is the theme's informational role: guidance and enum
                 # explanations are advice, not state.
                 for emit in emits:
-                    self.win.add_body(emit, attr=theme_attr(Theme.INFO),
-                                      context=Context(genre='TRANSIENT',
-                                                      pickable=False))
+                    self.add_body(emit, attr=theme_attr(Theme.INFO),
+                                  context=Context(genre='TRANSIENT',
+                                                  pickable=False))
 
             # A live inline edit is drawn under the block it changes, on this
             # screen too: editing from REVIEW must not hide the prompt.  DANGER
             # because on REVIEW the prompt commits the change ("Commit
             # changes..."), which is the point of no return for the session.
-            gw.add_confirm_item_line(
+            self.add_confirm_item_line(
                 param_name, attr=theme_attr(Theme.DANGER) | cs.A_BOLD)
 
         self.apply_pick_anchors(anchors, target_key)
@@ -985,19 +1009,18 @@ class RestoreScreen(GrubWizScreen):
         return True
 
     def draw_screen(self):
-        self.win.set_pick_mode(True)
-        self.add_body()
+        self.set_pick_mode(True)
+        self.draw_body()
         self.add_head()
 
     def add_head(self):
         """Add the RESTORE header with the available selection actions."""
-        gw = self.gw
         pos, base = self.win.pick_pos, '[c]mp [b]aseline'
         if 0 <= pos < len(self.bak_paths):
             if self.bak_paths[pos] == self.baseline_bak:
                 base = ''
         header = f'RESTORE [r]estore [d]el [t]ag [v]iew {base}    ESC:back ?:help [q]uit'
-        gw.add_fancy_header(header)
+        self.add_fancy_header(header)
 
     def _ensure_reference(self):
         """ Make sure reference is something valid """
@@ -1012,7 +1035,7 @@ class RestoreScreen(GrubWizScreen):
             new_ref = gw.ordered_backup_pairs[-1][1]
         self.baseline_bak = new_ref
 
-    def add_body(self):
+    def draw_body(self):
         """List every backup, marking the current file and the CMP baseline."""
         gw = self.gw
         if not gw.ordered_backup_pairs:
@@ -1025,12 +1048,12 @@ class RestoreScreen(GrubWizScreen):
             prefix = Glyphs.current() if is_current else ' '
             ref = 'CMP' if self.baseline_bak == bak_path else '   '
             self.bak_paths.append(bak_path)
-            self.win.add_body(f'{prefix} {ref} {bak_path.name}',
-                            context=Context(genre='backup', bak_path=bak_path))
+            self.add_body(f'{prefix} {ref} {bak_path.name}',
+                          context=Context(genre='backup', bak_path=bak_path))
             # A retag prompt is about this one file, so it sits directly under
             # the row that names it and the bare tag being edited stays
             # readable next to the filename it will become part of.
-            gw.add_confirm_item_line(bak_path)
+            self.add_confirm_item_line(bak_path)
 
     def baseline_ACTION(self):
         """Handle 'b' key on RESTORE screen - baseline for CMP"""
@@ -1301,27 +1324,27 @@ class ViewScreen(GrubWizScreen):
 
     def draw_screen(self):
         """Draw the selected backup's contents and its header."""
-        self.win.set_pick_mode(False)
-        self.add_body()
+        self.set_pick_mode(False)
+        self.draw_body()
         self.add_head()
 
     def add_head(self):
         """Add the VIEW header naming the displayed backup."""
         gw = self.gw
         header = f'VIEW  {gw.bak_path.name!r}  ESC:back ?:help [q]uit'
-        gw.add_fancy_header(header)
+        self.add_fancy_header(header)
 
-    def add_body(self):
+    def draw_body(self):
         """Render the selected backup with line numbers and wrapping."""
         gw = self.gw
         wid = self.win.cols - 7 # 4 num + SP before + 2SP after
         indent = ' ' * 6 # align wrapped text past the 4-digit index column
         for idx, line in enumerate(gw.bak_lines):
-            self.win.add_body(f'{idx:>4}', attr=cs.A_BOLD)
-            self.win.add_body(f'  {line[:wid]}', resume=True)
+            self.add_body(f'{idx:>4}', attr=cs.A_BOLD)
+            self.add_body(f'  {line[:wid]}', resume=True)
             line = line[wid:]
             while line:
-                self.win.add_body(f'{indent}{line[:wid]}')
+                self.add_body(f'{indent}{line[:wid]}')
                 line = line[wid:]
 
 class WarnScreen(GrubWizScreen):
@@ -1365,7 +1388,7 @@ class WarnScreen(GrubWizScreen):
 
     def draw_screen(self):
         """Draw the warnings-configuration body and header."""
-        self.win.set_pick_mode(True)
+        self.set_pick_mode(True)
         self.draw_body()
         self.draw_head()
 
@@ -1387,7 +1410,7 @@ class WarnScreen(GrubWizScreen):
         # Show search bar (with cursor if active, or just text if not)
         line += gw.search_bar.get_display_string(prefix='   /')
         line += '   ESC:back [q]uit'
-        gw.add_fancy_header(line)
+        self.add_fancy_header(line)
 
 
     def refresh_warn_info(self):
@@ -1471,7 +1494,7 @@ class WarnScreen(GrubWizScreen):
                     elif first_shown is None:
                         first_shown = row
                 rows_by_key[key] = row
-                self.win.add_body(line, context=Context(genre='warn', warn_key=key))
+                self.add_body(line, context=Context(genre='warn', warn_key=key))
                 # Only update prev_param for lines that are actually displayed
                 prev_param = param_name
                 row += 1
@@ -1508,9 +1531,10 @@ class _PrefsThemeStore:
     instead of holding a reference captured here.  A missing application (a
     bare screen in a test) means "nothing remembered", which is not an error.
 
-    The choice is stored verbatim, including grub-wiz's ``mono`` pseudo-theme.
+    The choice is stored verbatim, including the real ``mono`` theme.
     Deciding colour here would make a remembered ``mono`` impossible, so that
-    decision belongs to the picker; this class only persists what it is given.
+    decision belongs to the picker; this class only persists what it is given
+    and mirrors it on the live application.
     """
 
     @staticmethod
@@ -1525,8 +1549,6 @@ class _PrefsThemeStore:
         prefs = self._prefs()
         if prefs is None:
             return
-        # ``theme_name`` is the choice (a palette or ``mono``); ``win.theme``
-        # remains the palette installed underneath it.
         GrubWiz.singleton.theme_name = name
         prefs.save(name)
 
@@ -1539,89 +1561,31 @@ PREFS_THEME_STORE = _PrefsThemeStore()
 # choice to the live window, discovers the key this app bound to ``spin_theme``
 # for its hint line, and remembers the result through the store above.
 # Deriving it from GrubWizScreen (rather than from Screen) keeps the app-level
-# action set, so ESC and ? still work on that screen.  The subclass below adds
-# grub-wiz's one pseudo-theme, ``mono``, through the library's documented
-# ``theme_label()`` hook.
-class ThemeScreen(Theme.create_picker_screen(  # type: ignore[misc]
-        GrubWizScreen,
-        cycle_key='t',
-        store=PREFS_THEME_STORE,
-        note='The choice is remembered for the next start.')):
-    """COLOR THEME picker, cycling every palette and then ``mono``.
-
-    ``mono`` is not a library palette: it keeps the default palette installed
-    but resolves the semantic roles to attributes (bold/reverse/plain), which
-    is exactly what a monochrome terminal or ``--no-color`` shows.  The header
-    names it through ``theme_label()`` so the label and the swatches agree.
-    """
-
-    def theme_label(self, theme_name):
-        """Name the choice in effect; ``mono`` is anything with colour off."""
-        if not colors_enabled():
-            return 'Mono'
-        return super().theme_label(theme_name)
-
-    def spin_theme_ACTION(self):
-        """Cycle the palettes, then ``mono``, and remember the choice."""
-        current = getattr(self.app, 'theme_name', None)
-        if current not in THEME_CYCLE:
-            current = Theme.resolve(self.app.win.theme)
-        if not colors_enabled():
-            # A --no-color run is already on mono, whatever palette is
-            # installed underneath it, so cycling continues from there.
-            current = MONO_THEME
-
-        value = THEME_CYCLE[
-            (THEME_CYCLE.index(current) + 1) % len(THEME_CYCLE)]
-        self._apply_choice(value)
-        self._remember(value)
-
-    def _apply_choice(self, value):
-        """Install *value*: a palette with colour, or mono without it."""
-        win = self.app.win
-        if value == MONO_THEME:
-            set_colors_enabled(False)
-            # A neutral background keeps mono independent of the palette that
-            # happened to be installed before it.
-            Theme.apply_to(win, Theme.resolve('default'))
-        else:
-            set_colors_enabled(True)
-            Theme.apply_to(win, value)
-        self.app.theme_name = value
-
-    @staticmethod
-    def _remember(value):
-        """Persist the choice; a failing store never breaks the cycle."""
-        try:
-            PREFS_THEME_STORE.save(value)
-        except Exception:
-            logger.warning('could not remember theme %r', value, exc_info=True)
+# action set, so ESC and ? still work on that screen.  ``mono`` is a real theme
+# in 3.1, so the generated picker cycles it with no application override.
+ThemeScreen = Theme.create_picker_screen(
+    GrubWizScreen,
+    cycle_key='t',
+    store=PREFS_THEME_STORE,
+    note='The choice is remembered for the next start.')
 
 
 class HelpScreen(GrubWizScreen, BasicHelpScreen):
-    """HELP screen: navigation keys, the option list, then the display notes."""
+    """HELP screen: nav keys, the scoped option list, notes, and font check.
 
-    # The font check belongs here: it is where a user goes when the screen
-    # looks wrong, and it only helps if it prints the real glyphs.  In ASCII
-    # mode the same slot explains how to try the full set again.
-    show_display_notes = True
+    ``BasicHelpScreen.draw_screen()`` supplies the whole page.  That matters:
+    the Fonts section, the notes wrapper and the ``Keys for '<screen>':`` scope
+    all live there, and a hand-rolled page loses them silently.  The app adds
+    only its own paragraph.
+    """
 
     def extra_help_paragraphs(self):
         """Non-binding copy: the theme picker and what it remembers.
 
-        Not a header: the header is already the scarcest line on screen, and
-        this is only interesting when something looks wrong.  Wrapping and the
-        dim attribute come from ``BasicHelpScreen.draw_notes()``.
+        Wrapping, the bullet and the separator come from
+        ``BasicHelpScreen.draw_notes()``.
         """
         return (display_help.theme_paragraph('T', 't', remembered=True),)
-
-    def draw_screen(self):
-        """Draw navigation-key and body help for the current screen."""
-        gw, win = self.gw, self.win
-        win.set_pick_mode(False)
-        gw.spinner.show_help_nav_keys(win)
-        gw.spinner.show_help_body(win)
-        self.draw_notes(win)
 
 
 # --- Shell-value validation for /etc/default/grub --------------------------
@@ -1823,19 +1787,15 @@ class GrubWiz:
         # the saved theme is the one the window starts with.  ``--theme`` wins
         # for this run without overwriting what the user remembered.
         self.prefs = UiPrefs()
-        # console-window resolves the same precedence the picker uses: an
-        # explicit --theme, else the remembered choice, else the
+        # console-window resolves the precedence the picker uses: an explicit
+        # --theme, then ``NO_COLOR``, then the remembered choice, else the
         # terminal-default theme.  A stale name (a theme the library dropped, a
         # hand-edited preference) degrades instead of failing to draw.
-        # ``theme_name`` is the *choice* and may be grub-wiz's ``mono``
-        # pseudo-theme; ``win.theme`` stays the palette actually installed.
-        self.theme_name = initial_theme_choice(
+        # ``mono`` is a real theme in 3.1, so there is no second "colours" value
+        # and no app pseudo-theme: theme_name is the one decision.
+        self.theme_name = initial_theme_name(
             getattr(cli_opts, 'theme', None) if cli_opts else None, self.prefs)
-        # Colour is decoration, never information: --no-color (or NO_COLOR,
-        # unless an explicit --theme asks for colour) resolves the semantic
-        # roles to attributes for this run, and a remembered ``mono`` does the
-        # same on start-up.
-        apply_color_policy(cli_opts, self.prefs)
+        self.running = True
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
@@ -1862,12 +1822,11 @@ class GrubWiz:
     # an action key cannot fire underneath it.
     ####################################################################
 
-    #: Marks a confirmation as a question rather than content.  It stays in the
-    #: app's own text: the library keeps a caller's wording verbatim so that
-    #: decorations remain application policy.  The value is the documented
-    #: Unicode marker; ``confirm_glyph()`` is what callers actually draw, so
-    #: ``--ascii`` can substitute a marker the font certainly has.
-    CONFIRM_GLYPH = '⚠️'
+    #: The question marker is ``Glyphs.alert()`` (the ``bell`` emoji, or its
+    #: two-cell ASCII fallback).  It stays in the app's own text: the
+    #: library keeps a caller's wording verbatim so decorations remain
+    #: application policy.  Asking the registry at draw time is what lets
+    #: ``--ascii`` substitute a marker the font certainly has.
 
     #: Gap either side of the glyph, and it is deliberately two cells.  An
     #: emoji-presentation glyph is two cells wide but one character, so a single
@@ -1935,9 +1894,10 @@ class GrubWiz:
         self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
         if self.spinner is not None:
             self.spinner.stack = self.ss
-            # Keep the spinner's option object and the stack's obj in sync;
-            # OptionSpinner.default_obj's setter does the same when a stack
-            # is present, but the assignment above bypasses it.
+            # Screens find the spinner through ``stack.spinner`` (3.0's
+            # injection), so the new stack has to be told about it too.  Keep
+            # the option object in sync as well.
+            self.ss.spinner = self.spinner
             self.ss.obj = self.spinner.default_obj
 
     def reinit_gw(self):
@@ -2034,15 +1994,95 @@ class GrubWiz:
 
         self.refresh_backup_list()
 
+    def register_keys(self, spinner):
+        """Register every application key on *spinner*.
+
+        Split out of ``setup_win()`` so a headless test can build the real
+        screens and stack, register the real options, and assert their scopes
+        without running curses.  Registration errors (a reserved built-in key,
+        a duplicate attribute, a navigation-key conflict) fire here, before a
+        key is ever pressed.  ``quit`` and ``escape`` are already registered by
+        ``OptionSpinner``; the app only overrides their handlers.
+
+        ``scope`` is derived from which screens implement ``<attr>_ACTION``, so
+        a global registration still lands on exactly the screens that can act
+        on it.  That is what makes the canned help the key map.
+        """
+        spinner.add_key('help_mode', '? - enter help screen', genre='action')
+
+        spinner.add_key('cycle_next', 'RIGHT,SP - next cycle value',
+                        genre='action', keys=[cs.KEY_RIGHT, ord(' ')])
+        spinner.add_key('cycle_prev', 'LEFT,BS,C - prev cycle value',
+                        genre='action',
+                        keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
+        spinner.add_key('edit', 'e - edit value', genre='action')
+        spinner.add_key('expert_edit', 'E - expert edit (minimal validation)',
+                        genre='action', keys=[ord('E')])
+        spinner.add_key('undo', 'u - revert value', genre='action')
+
+        spinner.add_key('hide', 'x - inh/allow warnings', genre='action')
+        spinner.add_key('show_hidden', 's - show/hide inactive params',
+                        genre='action')
+        spinner.add_key('write', 'w - write params and run "grub-update"',
+                        genre='action')
+
+        spinner.add_key('guide', 'g - guidance level',
+                        vals=['Off', 'Enums', 'Full'])
+        spinner.add_key('fancy_headers',
+                        'f - cycle fancy headers (Off/Underline/Reverse)',
+                        vals=['Underline', 'Reverse', 'Off'])
+
+        spinner.add_key('enter_restore', 'R - enter restore screen',
+                        genre='action')
+        spinner.add_key('enter_warnings', 'W - enter WARNINGs screen',
+                        genre='action')
+
+        spinner.add_key('restore',
+                        'r - restore selected backup [in restore screen]',
+                        genre='action')
+        spinner.add_key('delete',
+                        'd - delete selected backup [in restore screen]',
+                        genre='action')
+        spinner.add_key('tag',
+                        't - tag/retag a backup file [in restore screen]',
+                        genre='action')
+        spinner.add_key('view',
+                        'v - view a backup file [in restore screen]',
+                        genre='action')
+        spinner.add_key('baseline',
+                        'b - set CMP baseline [in restore screen]',
+                        genre='action')
+        spinner.add_key('compare',
+                        'c - compare with baseline [in restore screen]',
+                        genre='action')
+
+        spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]',
+                        genre='action')
+
+        # ENTER/^J must reach the inline search prompt in passthrough mode.
+        # ``escape_keys=[27]`` leaves them free for this no-action registration.
+        spinner.add_key('_search_enter', '', keys=[10, 13])
+        spinner.add_key('show_keys', 'K - show keys (demo mode)',
+                        genre='action')
+
+        # Theme selection.  The picker key is deliberately absent from every
+        # header hint: it is a preference, not a step in editing, so it is
+        # advertised only where keys are listed (the HELP screen).  ``T`` opens
+        # the picker from anywhere; ``t`` cycles themes while it is open, which
+        # is also the key the picker's own header advertises.
+        spinner.add_key('theme_screen', 'T - color theme picker',
+                        genre='action')
+        spinner.add_key('spin_theme', 't - cycle color theme', genre='action')
+
     def setup_win(self):
         """Create the console window, screens, key bindings, and search bars."""
         # LEFT/RIGHT drive cycle_prev/cycle_next on this app, so this window
         # asks console-window to hand those codes over instead of mutating the
         # library's global NAVIGATION_KEYS.  ``taken_nav_keys`` removes them
-        # from this window's navigation set only and prints the app's meaning
-        # in the navigation help; other windows in the process keep the full
-        # default set.  Dialogs and passthrough editing still get arrow-key
-        # cursor movement, which never consulted the navigation set.
+        # from this window's navigation set only and prunes them from the
+        # generated help; other windows in the process keep the full default
+        # set.  Dialogs and passthrough editing still get arrow-key cursor
+        # movement, which never consulted the navigation set.
         win_opts = ConsoleWindowOpts(
             head_line=True,
             ctrl_c_terminates=False,
@@ -2052,11 +2092,10 @@ class GrubWiz:
             answer_show_redraws=self.cli_opts.answer_timeout_debug,
             min_cols_rows=(70, 10),  # Allow smaller terminals (down from default 20 rows)
             taken_nav_keys=TAKEN_NAV_KEYS,
-            # Seed the window with the remembered (or --theme) palette; the
-            # theme picker changes it later through win.set_theme().  ``mono``
-            # is a choice, not a library palette, so it resolves to the default
-            # palette underneath with the colour switch turned off.
-            theme=Theme.resolve(self.theme_name),
+            # Seed the window with the resolved theme (a palette or the real
+            # ``mono`` theme); the picker changes it later through
+            # win.set_theme(), which also synchronizes the colour switch.
+            theme=self.theme_name,
         )
 
         # Create ConsoleWindow first (needed by screen objects)
@@ -2110,59 +2149,14 @@ class GrubWiz:
         # Create OptionSpinner with stack reference for proper action scoping.
         # It validates add_key() against this window's effective navigation
         # set, so LEFT/RIGHT are accepted as app keys while every remaining
-        # navigation key is still rejected.
+        # navigation key is still rejected.  ``quit`` (q, ^C) and ``escape``
+        # are registered by the constructor; ESC is narrowed to key 27 so that
+        # ENTER keeps its search/no-op meaning instead of popping a screen.
         spinner = self.spinner = OptionSpinner(stack=self.ss,
-                                               nav_keys=win_opts.nav_keys)
+                                               nav_keys=win_opts.nav_keys,
+                                               escape_keys=[27])
         self.spins = self.spinner.default_obj
-
-        # Register all keys (with stack available, actions will be properly scoped)
-        spinner.add_key('escape', 'ESC - back to prev screen', genre="action", keys=[27,])
-        spinner.add_key('help_mode', '? - enter help screen', genre='action')
-        spinner.add_key('quit', 'q,ctl-c - quit the app', genre='action',
-                        keys={QUIT_KEY, ord('q')})
-
-        spinner.add_key('cycle_next', '=>,SP - next cycle value',
-                        genre='action', keys=[cs.KEY_RIGHT, ord(' ')])
-        spinner.add_key('cycle_prev', '<=,BS - prev cycle value',
-                        genre='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
-        spinner.add_key('edit', 'e - edit value', genre='action')
-        spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', genre='action',
-                            keys=[ord('E')])
-        spinner.add_key('undo', 'u - revert value', genre='action')
-
-        spinner.add_key('hide', 'x - inh/allow warnings', genre='action')
-        spinner.add_key('show_hidden', 's - show/hide inactive params', genre='action')
-        spinner.add_key('write', 'w - write params and run "grub-update"', genre='action')
-
-        spinner.add_key('guide', 'g - guidance level', vals=['Off', 'Enums', "Full"])
-        spinner.add_key('fancy_headers', 'f - cycle fancy headers (Off/Underline/Reverse)',
-                        vals=['Underline', 'Reverse', 'Off'])
-
-
-        spinner.add_key('enter_restore', 'R - enter restore screen', genre='action')
-        spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', genre='action')
-
-        spinner.add_key('restore', 'r - restore selected backup [in restore screen]', genre='action')
-        spinner.add_key('delete', 'd - delete selected backup [in restore screen]', genre='action')
-        spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', genre='action')
-        spinner.add_key('view', 'v - view a backup file [in restore screen]', genre='action')
-        spinner.add_key('baseline', 'b - set CMP baseline [in restore screen]', genre='action')
-        spinner.add_key('compare', 'c - compare with baseline [in restore screen]', genre='action')
-
-        spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', genre='action')
-
-        # Add ENTER to handled keys so it passes through during search (no visible menu item)
-        # This is needed for the inline search prompt to receive ENTER in passthrough mode
-        spinner.add_key('_search_enter', '', keys=[10, 13])
-        spinner.add_key('show_keys', 'K - show keys (demo mode)', genre='action')
-
-        # Theme selection.  The picker key is deliberately absent from every
-        # header hint: it is a preference, not a step in editing, so it is
-        # advertised only where keys are listed (the HELP screen).  ``T`` opens
-        # the picker from anywhere; ``t`` cycles themes while it is open, which
-        # is also the key the picker's own header advertises.
-        spinner.add_key('theme_screen', 'T - color theme picker', genre='action')
-        spinner.add_key('spin_theme', 't - cycle color theme', genre='action')
+        self.register_keys(spinner)
 
         # Create the inline search prompt for WarnScreen filtering
         def on_search_change(text):
@@ -2267,43 +2261,6 @@ class GrubWiz:
         return param_name, cfg, enums, regex, value
 
 
-    def truncate_line(self, line):
-        """Truncate *line* to the window width using cell-aware widths."""
-        return truncate_to_width(line, self.win.cols-1)
-
-    def add_wrapped_body_line(self, line, indent, is_current, attr=None,
-                              context=None):
-        """Add a body line, wrapping it when it is the selected row.
-
-        *attr* is the row attribute (a theme colour pair, for example).  It is
-        applied to every screen row the line wraps onto, so a coloured warning
-        stays coloured when it is the picked row and gets reformatted.
-
-        Returns the number of screen lines added.
-        """
-        if not is_current:
-            self.win.add_body(self.truncate_line(line), attr=attr,
-                              context=context)
-            return 1
-
-        wid = self.win.cols
-        # textwrap counts code points; subtract the extra cells taken by any
-        # double-width glyphs so a wrapped line cannot overflow the window.
-        excess = display_width(line) - len(line)
-        wrapped = textwrap.fill(line, width=max(wid-1-excess, 1),
-                    subsequent_indent=' '*indent)
-        wraps = wrapped.split('\n')
-        for idx, wrap in enumerate(wraps):
-            # First line gets the context; continuation rows inherit the
-            # parent's visibility but are detail, never pick targets.
-            if idx == 0:
-                self.win.add_body(wrap, attr=attr, context=context)
-            else:
-                self.win.add_body(wrap, attr=attr,
-                                  context=Context(genre='TRANSIENT',
-                                                  pickable=False))
-        return len(wraps) # lines added
-
     def is_warn_hidden(self, param_name, hey):
         """True when the warning is inhibited and hidden warnings are off."""
         if not self.show_hidden_warns:
@@ -2319,60 +2276,6 @@ class GrubWiz:
             if str(value) != str(new_value):
                 diffs[key] = (value, new_value)
         return diffs
-
-    def add_fancy_header(self, line):
-        """
-        Wrapper that calls ConsoleWindow.add_fancy_header() with the current mode.
-        Gets the mode from self.spins.fancy_headers and delegates to the window.
-
-        While an inline prompt is live every key is routed to that prompt, so
-        the header's own hints can no longer be acted on.  They are drawn dim
-        to say so, which also leaves the prompt (the one full-intensity line in
-        the band) as the only thing that reads at a glance.  The window owns
-        that rule for the separator; here it is one attribute on the way past,
-        so every screen inherits it without repeating the condition.
-        """
-        mode = self.spins.fancy_headers
-        line_attr = cs.A_DIM if self.win is not None and self.win.prompt_active else None
-        self.win.add_fancy_header(line, mode=mode, line_attr=line_attr)
-
-    def add_confirm_header(self, attr=None):
-        """Draw a program/screen-scoped confirmation as the last header line.
-
-        ``add_prompt_header`` rather than ``add_fancy_header``: the bracketed
-        key hint is literal text here, not the ``[x]`` markup the fancy parser
-        would consume.  Centered, so the question sits in the middle of the
-        band instead of hugging the left edge among the (now dim) hints.
-
-        *attr* overrides the default bold question so a screen can paint it
-        with a theme colour role; REVIEW asks DANGER because answering it
-        commits the session's changes.
-        """
-        if self.win is None or self.confirm_scope != 'header':
-            return
-        self.win.add_prompt_header(
-            attr=cs.A_BOLD if attr is None else attr, align='center')
-
-    def add_confirm_item_line(self, item_key, attr=None, hint_attr=None):
-        """Draw an item-scoped confirmation directly below that item.
-
-        A screen calls this from its body builder after emitting the row whose
-        stable identity is *item_key*.  The prompt and its hint are transient
-        detail rows, not pick targets, so the row the prompt concerns stays
-        selected while it is live.  Truncating the hint is the window's job
-        (``add_prompt_lines``), so the dim line cannot overflow here.
-
-        *attr* and *hint_attr* override the default bold prompt and dim hint,
-        so a screen can paint its question with a theme colour role (REVIEW
-        uses DANGER because its prompt commits the change).
-        """
-        if self.win is None or self.confirm_scope != 'item':
-            return
-        if self.confirm_item_key != item_key:
-            return
-        self.win.add_prompt_lines(
-            attr=cs.A_BOLD if attr is None else attr,
-            hint_attr=cs.A_DIM if hint_attr is None else hint_attr)
 
     def has_live_item_confirm(self, item_key):
         """True when the live inline prompt belongs to *item_key*.
@@ -2465,11 +2368,13 @@ class GrubWiz:
                 return []
             value = self.param_values[param_name]
             edit = ' or [e]dit' if has_edit_regex(cfg['edit_re']) else ''
-            # wrapped = f': 🡄 🡆 {edit}:\n'
             wrapped = f': {Glyphs.nav()} {edit}:\n'
             for enum, descr in cfg['enums'].items():
-                star = ' ⯀ ' if str(enum) == str(value) else ' 🞏 '
-                line = f' {star}{enum}: {descr}\n'
+                # The catalog's resolved-choice marker, one cell in both modes;
+                # an unselected entry keeps the column blank.
+                marker = (Glyphs.get('choice') if str(enum) == str(value)
+                          else ' ')
+                line = f'  {marker} {enum}: {descr}\n'
                 wrapped += textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
                 wrapped += '\n'
             return wrapped.split('\n')
@@ -2833,7 +2738,10 @@ class GrubWiz:
         for param_name, pair in diffs.items():
             self.grub_file.param_data[param_name].new_value = pair[1]
 
-        self.win.stop_curses()
+        # Leave curses without destroying the content model or the pick state:
+        # the pads survive, so the screen comes back exactly where it was.  The
+        # supported way to shell out and return (3.0's suspend/resume pair).
+        self.win.suspend_curses()
         time.sleep(.75)
         print("\033[2J\033[H") # 'clear'
         print('\n\n===== Leaving grub-wiz screens to update GRUB ====> ')
@@ -2946,7 +2854,7 @@ class GrubWiz:
         # Otherwise continue to grub-wiz
         else:
             time.sleep(1.5) # show start up messages breifly
-            self.win.start_curses()
+            self.win.resume_curses()
             if ok:
                 self.reinit_gw()
                 self.reset_screen_stack()
@@ -3043,13 +2951,15 @@ class GrubWiz:
         before curses starts, so their output is visible on the terminal.
         """
         self.setup_win()
-        win, spins = self.win, self.spins # shorthand
+        win = self.win
         self.next_prompt_seconds = [0.1, 0.1]
 
-        while True:
-
-            screen_num = self.ss.curr.num
-            self.screens[screen_num].draw_screen()
+        while self.running:
+            screen = self.ss.get_curr_obj()
+            # ``clear()`` resets the content *and* adopts the screen on the
+            # window, so it is the canonical first call of every pass.
+            screen.clear()
+            screen.draw_screen()
 
             win.render()
             key = prompt_key(win, self.next_prompt_seconds[0])
@@ -3059,57 +2969,37 @@ class GrubWiz:
                 self.next_prompt_seconds = [3.0]
 
             if key is None:
-                # Note: adjust_picked_pos_w_clues() removed - Context pickable handles this
-                pass
+                # An idle wake-up (timeout or resize) is not an answer.
+                continue
 
-            if key is not None:
-                # A live inline confirmation owns every key: ESC cancels, the
-                # confirming key continues the action, and nothing can trigger
-                # an action key underneath the prompt.  An idle wake-up (``key
-                # is None``: an expired prompt() timeout or a resize) is not an
-                # answer, so the prompt simply stays live.
-                if win.prompt_active:
-                    win.handle_prompt_key(key)
-                    win.clear()
+            # A live inline confirmation owns every key: ESC cancels, the
+            # confirming key continues the action, and nothing can trigger an
+            # action key underneath the prompt.
+            if win.prompt_active:
+                win.handle_prompt_key(key)
+                continue
+
+            # Ctrl-C is the quit key too.  Handle it before the search bars and
+            # passthrough mode can swallow it, and give it the same
+            # unapplied-changes check as 'q'.
+            if key == QUIT_KEY:
+                if self.request_quit():
+                    break
+                continue
+
+            # A search bar owns the keys it created.
+            if self.search_bar.is_active:
+                if self.search_bar.handle_key(key):
+                    continue
+            elif self.home_search_bar.is_active:
+                if self.home_search_bar.handle_key(key):
                     continue
 
-                # Ctrl-C is the quit key too.  Handle it before the search bars
-                # and passthrough mode can swallow it, and give it the same
-                # unapplied-changes check as 'q' (spinner.do_key never sees it).
-                if key == QUIT_KEY:
-                    spins.quit = False
-                    if self.request_quit():
-                        break
-                    win.clear()
-                    continue
-
-                # Check if any search bar is active and should handle the key
-                if self.search_bar.is_active:
-                    if self.search_bar.handle_key(key):
-                        # Key was handled by warn search bar, clear screen and redraw
-                        win.clear()
-                        continue
-                elif self.home_search_bar.is_active:
-                    if self.home_search_bar.handle_key(key):
-                        # Key was handled by home search bar, clear screen and redraw
-                        win.clear()
-                        continue
-
-                self.spinner.do_key(key, win)
-
-                # Handle app-level quit action ('q')
-                if spins.quit:
-                    spins.quit = False
-                    if self.request_quit():
-                        break
-
-                # Use perform_actions() to automatically handle all screen-specific actions
-                # This replaces the manual action list and handles: cycle_next, cycle_prev,
-                # undo, show_hidden, edit, expert_edit, hide, write, restore, delete, tag,
-                # view, slash, baseline, compare, escape, help_mode, enter_restore, enter_warnings
-                self.ss.perform_actions(self.spinner)
-
-            win.clear()
+            # ``q``/``^C`` are built-in spinner actions now: do_key() sets the
+            # flag and perform_actions() calls this screen's quit_ACTION(),
+            # which asks the app and sets running=False.
+            self.spinner.do_key(key, win)
+            self.ss.perform_actions(self.spinner)
 
 def rerun_module_as_root(module_name):
     """ rerun using the module name """
@@ -3142,11 +3032,13 @@ def build_parser():
                         help='for test only: enables screen redraw indicator')
     parser.add_argument('-k', '--keep-all-bak', action='store_true',
                         help='keep every backup; skip the start-up purge')
-    # --ascii (with an optional boolean), --glyphs, --theme and --no-color come
-    # from console-window, so the flags mean the same thing here as in every
-    # other app built on the library.  Passing the store only makes the help
-    # text say what is true: the choice is remembered.
-    display_cli.add_display_arguments(parser, theme_store=PREFS_THEME_STORE)
+    # --ascii (with an optional boolean), --glyphs and --theme come from
+    # console-window, so the flags mean the same thing here as in every other
+    # app built on the library.  ``--theme mono`` is the color-off switch; the
+    # separate ``--no-color`` flag is gone in 3.x.  Passing the store only makes
+    # the help text say what is true: the choice is remembered.
+    display_cli.add_display_arguments(parser, theme_store=PREFS_THEME_STORE,
+                                      prog='grub-wiz')
     return parser
 
 

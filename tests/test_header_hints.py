@@ -22,11 +22,13 @@ def make_common_screen(current):
         ss=SimpleNamespace(is_curr=lambda screen: screen == current),
         spins=SimpleNamespace(guide='Off'),
         get_diffs=lambda: {},
-        add_fancy_header=captured.append,
         warn_db=SimpleNamespace(write_if_dirty=lambda: None),
     )
     screen = HomeScreen.__new__(HomeScreen)
     screen.gw = gw
+    screen.app = gw
+    # The writer is a Screen method in 3.0; capture the composed text here.
+    screen.add_fancy_header = captured.append
     return screen, captured
 
 
@@ -102,11 +104,12 @@ def test_warncfg_header_advertises_help_and_styles_escape():
     gw = SimpleNamespace(
         warn_db=SimpleNamespace(is_inhibit=lambda _key: False),
         search_bar=SimpleNamespace(get_display_string=lambda prefix: ''),
-        add_fancy_header=captured.append,
+        win=SimpleNamespace(get_picked_context=lambda: None),
     )
     screen = WarnScreen.__new__(WarnScreen)
     screen.gw = gw
-    screen.win = SimpleNamespace(get_picked_context=lambda: None)
+    screen.app = gw
+    screen.add_fancy_header = captured.append
 
     screen.draw_head()
 
@@ -123,15 +126,15 @@ def make_review_head2_screen(picked, inhibits=()):
     gw = SimpleNamespace(
         ss=SimpleNamespace(is_curr=lambda screen: screen == REVIEW_ST),
         get_enums_regex=lambda: ('', None, [], None, None),
-        win=SimpleNamespace(get_picked_context=lambda: picked),
+        win=SimpleNamespace(cols=80, get_picked_context=lambda: picked),
         param_name_wid=20,
         show_hidden_params=True,
         warn_db=SimpleNamespace(is_inhibit=lambda key: key in hidden),
-        add_fancy_header=captured.append,
     )
     screen = HomeScreen.__new__(HomeScreen)
     screen.gw = gw
-    screen.win = SimpleNamespace(cols=80)
+    screen.app = gw
+    screen.add_fancy_header = captured.append
     return screen, captured
 
 

@@ -50,8 +50,8 @@
 ##### EDIT SCREEN
 Running `grub-wiz` brings a screen similar to:
 ```
- EDIT  [g]uide=Off  [w]rite-grub    [R]estore [W]arnCfg ?:help [q]uit  𝚫=0
- [s]how-all-params(22-inact)  ⮜–⮞ [e]dit x:deact
+ EDIT  [g]uide=Off  [w]rite-grub    [R]estore [W]arnCfg ?:help [q]uit  delta=0
+ [s]how-all-params(22-inact)  ◂–▸ [e]dit x:deact
 ─────────────────────────────────────────────────────────────────────────────────────────────
  [Boot Timeout]
 >  TIMEOUT·················  5                                                               
@@ -67,8 +67,8 @@ Running `grub-wiz` brings a screen similar to:
 ```
 NOTES:
 * `grub-wiz` is only showing "active" parameters (the uncommented ones in the grub file); to add parameters, see them all with the `s` key. The parameters that are inactive will be marked with an `✘`.
-* In the header, `⮜–⮞` indicates you can cycle through a list of values with the right/left arrow keys.
-* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform. The value is typed on a line right under that parameter — `⚠️  Edit value, then ENTER or ESC: 5│` — so the old value stays on screen while you edit it (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). A dim line below says what the value may be (`-1 for infinite, 0 or positive integer`), so the prompt itself stays short; an answer that fails the check leaves the text in place with the prompt changed to `⚠️  Re-edit value, then ENTER or ESC`. `E` runs the same editor in expert mode, with minimal checks. Only the few long parameters (`GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, …) still open a full-screen dialog, because several rows of text do not fit on one line.
+* In the header, `◂–▸` indicates you can cycle through a list of values with the right/left arrow keys.
+* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it conform. The value is typed on a line right under that parameter — `🔔  Edit value, then ENTER or ESC: 5│` — so the old value stays on screen while you edit it (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). A dim line below says what the value may be (`-1 for infinite, 0 or positive integer`), so the prompt itself stays short; an answer that fails the check leaves the text in place with the prompt changed to `🔔  Re-edit value, then ENTER or ESC`. `E` runs the same editor in expert mode, with minimal checks. Only the few long parameters (`GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, …) still open a full-screen dialog, because several rows of text do not fit on one line.
 * When you done editing, then type `w` to write the parameter after you **review** them.
 * Edits are held in memory until you write them, so leaving with `q` **or Ctrl-C** asks before discarding them (on the RESTORE screen either key just goes back one screen).
 * For editing the `CMDLINE` parameters, see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
@@ -76,19 +76,18 @@ NOTES:
 ##### REVIEW SCREEN AND WRITING/UPDATING GRUB
 The next step in updating the `grub` configuration is the REVIEW screen:
 ```
- REVIEW  [g]uide=Off  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  𝚫=4
-                               ⮜–⮞ [e]dit x:deact [u]ndo
+ REVIEW  [g]uide=Off  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  delta=4
+                               ◂–▸ [e]dit x:deact [u]ndo
 ───────────────────────────────────────────────────────────────────────────────────────
    TIMEOUT···················  0
-                  └───   🟌🟌🟌🟌  when 0, TIMEOUT_STYLE cannot be "hidden"
+                  └───────   ✱✱✱✱  when 0, TIMEOUT_STYLE cannot be "hidden"
    TIMEOUT_STYLE·············  hidden
-                  └───   🟌🟌🟌🟌  when "hidden", TIMEOUT cannot be 0
+                  └───────   ✱✱✱✱  when "hidden", TIMEOUT cannot be 0
    RECORDFAIL_TIMEOUT········  200
-                └──────── was  ≡
-                  └───      🟌  over 120s seems ill advised
+                  └───────      ✱  over 120s seems ill advised
    CMDLINE_LINUX·············  "splash"
                 └──────── was  ""
-                  └───    🟌🟌🟌  splash/quiet/rhgb belong only in CMDLINE_LINUX_DEFAULT
+                  └───────    ✱✱✱  splash/quiet/rhgb belong only in CMDLINE_LINUX_DEFAULT
 >  CMDLINE_LINUX_DEFAULT·····  ""                                                      
                 └──────── was  "quiet splash"
    DISTRIBUTOR···············  'Kubuntu'
@@ -99,8 +98,8 @@ NOTES:
 * On this screen, you may edit parameter values just as on the EDIT screen if the parameter is shown.
 * Warnings are be dismissed by fixing the values or by inhibiting the warning (with the `x` key).
 * If you inhibit warnings, they remain suppressed in future sessions until allowed.
-* Lines on this screen and others that end with `▶` are truncated. To see the rest of the text, visit that line.
-* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`.  The confirmation appears inline as a centered header line (`⚠️  Commit changes and update GRUB?  ["y" or ESC]  ⚠️`), so the review stays visible: press `y` to commit, or `ESC` to cancel. While the question is live, the other header hints and the divider are dimmed — nothing else can be acted on at that moment, so the question is the only line that reads at a glance. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
+* Lines on this screen and others that end with `▸` are truncated. To see the rest of the text, visit that line.
+* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`.  The confirmation appears inline as a centered header line (`🔔  Commit changes and update GRUB?  ["y" or ESC]  🔔`), so the review stays visible: press `y` to commit, or `ESC` to cancel. While the question is live, the other header hints and the divider are dimmed — nothing else can be acted on at that moment, so the question is the only line that reads at a glance. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
 
 **Automatic Initramfs Rebuild Detection** (Major Safety Feature)
 
@@ -121,7 +120,7 @@ If you've changed kernel command-line arguments that affect early boot (GPU driv
 
 3. **Prompt intelligently**:
    ```
-   ⚠️  Gpu Drivers changes detected ('nvidia').
+   🔔  Gpu Drivers changes detected ('nvidia').
    Rebuilding initramfs ensures driver/module changes take effect at early boot.
 
    Disk space check: OK: 591468MB free in /boot (need ~507MB, surplus: 590961MB)
@@ -145,19 +144,19 @@ After the optional initramfs rebuild, you will be given the choice to reboot, po
 * *Header Style*: Typing `f` cycles the header style between Underline, Reverse, and Off.
 * *Guidance Levels*: Typing `g` on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `DISABLE_OS_PROBER` parameter is shown below.
 ```
- REVIEW  [g]uide=Full  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  𝚫=3
-                             ⮜–⮞ undo
+ REVIEW  [g]uide=Full  [w]rite-grub    ESC:back [W]arnCfg ?:help [q]uit  delta=3
+                             ◂–▸ undo
 ──────────────────────────────────────────────────────────────────────────────
 >  DISABLE_OS_PROBER·······  false                                            
-              └──────── was  ∎
+              └──────── was  #comment
                 └───      *  perhaps set "true" since no multi-boot detected?
     ╭Setting to 'true' prevents GRUB from automatically scanning other
     │     partitions for installed operating systems (like Windows, other
     │     Linux distros) and adding them to the boot menu.
-    │: ⮜–⮞ :
-    │  ⯀ false: Search for and automatically add other operating systems to
+    │: ◂–▸ :
+    │  ➤ false: Search for and automatically add other operating systems to
     │     the menu.
-    ╰  🞏 true: Do not search for other operating systems.
+    ╰    true: Do not search for other operating systems.
 ```
 
 ##### RESTORE SCREEN
@@ -166,12 +165,12 @@ When you enter the restore screen by typing `R` from the EDIT screen, it looks s
  RESTORE [r]estore [d]el [t]ag [v]iew [c]mp [b]aseline    ESC:back ?:help [q]uit
 ───────────────────────────────────────────────────────────────────────────────────
 >●     20261025-083036-s559DCA.~Timeout+1.bak
-        ⚠️  Edit tag, then ENTER or ESC: ~Timeout+1│
+        🔔  Edit tag, then ENTER or ESC: ~Timeout+1│
        20261025-074512-s559DCA.BASELINE.bak
        20261024-221007-s0A91E4.~Theme.bak
    CMP 20261024-190231-s0A91E4.RESYNC.bak
 ```
-The second line is what pressing `t` looks like: the prompt is drawn under the row being renamed, seeded with the current tag and edited in place (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). `[r]estore` and `[d]el` use the same place, asking one-key questions there instead of replacing the screen with a dialog: `⚠️  Restore GRUB source from .bak?  ["y" or ESC]  ⚠️` and `⚠️  Delete .bak?  ["y" or ESC]  ⚠️`. Nothing is written or removed until `y` is pressed, and `ESC` leaves the backup untouched.
+The second line is what pressing `t` looks like: the prompt is drawn under the row being renamed, seeded with the current tag and edited in place (`←`/`→` move the caret, `ENTER` applies, `ESC` cancels). `[r]estore` and `[d]el` use the same place, asking one-key questions there instead of replacing the screen with a dialog: `🔔  Restore GRUB source from .bak?  ["y" or ESC]  🔔` and `🔔  Delete .bak?  ["y" or ESC]  🔔`. Nothing is written or removed until `y` is pressed, and `ESC` leaves the backup untouched.
 
 *Backup and restore features*:
  - the leading `●` indicates it is the backup for the current session.
@@ -220,20 +219,20 @@ Finally, we show the Warnings Configuration Screen.  Here is a short snippet:
 Every possible warning (currently about 50) is shown on the Warning Configuration Screen. You can inhibit and allow warnings as you please. More often, you probably will inhibit/allow warnings on the Review Screen as they arise and you wish to dismiss it.
 
 ##### COLOR THEMES AND SYMBOLS
-Press `T` from any screen to open the COLOR THEME picker, then `t` to cycle through the palettes (`default`, `dark-mono`, `light-mono`, `solarized-dark`, `solarized-light`, `gruvbox`, `nord`) and finally `mono`, while the labelled swatches change live. `ESC` returns to where you were.
+Press `T` from any screen to open the COLOR THEME picker, then `t` to cycle through the palettes (`dark`, `light`, `default`, `solarized-dark`, `solarized-light`, `gruvbox`, `nord`) and finally `mono`, while the labelled swatches change live. `ESC` returns to where you were.
 
 The picker's key is deliberately kept out of the header lines — headers are for the steps you take while editing — so the help screen (`?`) is where you look it up.
 
-* The `default` theme follows your terminal's own colors. If warnings, stars or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
+* The `default` theme follows your terminal's own colors. If warnings, severity marks or highlighted values are hard to read (say, dark text on a dark profile), pick another theme; the choice is saved in `~/.config/grub-wiz/ui-prefs.yaml` and used on the next start.
 * `--theme NAME` picks a palette for one run without changing the remembered choice.
-* `grub-wiz --no-color` draws the semantic roles — the warning blocks, the guidance text, the value a change replaces and the commit question on the REVIEW screen — as bold/reverse text instead of colour for that run. The `NO_COLOR` environment variable does the same, unless you pass an explicit `--theme`. Picking a palette with `T`/`t` turns colour back on.
-* The picker's `mono` entry is the remembered form of that switch: picking it saves the mode, so the next start is monochrome too, and picking any palette turns colour back on. `--no-color` itself stays a one-run choice.
+* `grub-wiz --theme mono` draws the semantic roles — the warning blocks, the guidance text, the value a change replaces and the commit question on the REVIEW screen — as bold/reverse text instead of colour for that run. The `NO_COLOR` environment variable selects `mono` too, unless you pass an explicit `--theme`. Picking a palette with `T`/`t` turns colour back on.
+* `mono` is a real theme in console-window 3.1: picking it saves it, so the next start is monochrome too, and picking any palette turns colour back on. A one-run `--theme mono` does not change what is remembered.
 
-The UI also draws a few Unicode symbols because they carry meaning that a plain letter would not: `⮜–⮞` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `🟌`/`🟍` (warning severity), `●` (the backup recorded by this session) and `⚠️` (a question waiting for an answer). That handling now lives in the [`console-window`](../console-window) library, so grub-wiz only declares its vocabulary and every console-window app benefits from the same behaviour:
+The UI also draws a few symbols because they carry meaning that a plain letter would not: `◂–▸` (cycle with left/right), `✘` (inactive parameter or inhibited warning), `✱` (warning severity on REVIEW; the WARNINGS screen uses `⭐`), `●` (the backup recorded by this session), `➤` (the selected enum) and `🔔` (a question waiting for an answer). The emoji stay emoji: console-window 3.1's two-cell contract keeps `⭐`/`🔔` aligned in both the Unicode and the `--ascii` spelling. REVIEW's asterisk is a one-cell text mark, so it takes the warning row's colour instead of the terminal's emoji palette. The prompt uses a bell rather than a second star so it is never mistaken for the severity badge. That handling lives in the [`console-window`](../console-window) library, so grub-wiz only names catalog glyphs and every app on the library benefits from the same behaviour:
 
 1. it checks what it can — a non-UTF-8 terminal or `TERM=dumb` switches to the ASCII symbols by itself and says so;
-2. it prints a "font check" line containing the real characters at start-up, and repeats it on the help screen, so you can look at them (or copy the line into a shell);
-3. `grub-wiz --ascii` forces the plain-ASCII equivalents (`<->`, `X`, `*`, `(!)`, …); `--ascii=no` (or `--glyphs=unicode`) forces the Unicode set back;
+2. the first help page (`?`) carries a Fonts section with the real characters, so you can look at them (or copy them into a shell);
+3. `grub-wiz --ascii` forces the plain-ASCII equivalents (`<->`, `x`, `s `, `S `, …); `--ascii=no` (or `--glyphs=unicode`) forces the Unicode set back;
 4. while drawing, only the symbols grub-wiz registered are substituted, so real content — a `GRUB_CMDLINE_LINUX` value, a backup's UTF-8 lines — is never rewritten.
 
 If the symbol line looks right, there is nothing to do. If any symbol is a box or blank, use `--ascii`. `python -m grub_wiz.Glyphs` prints the same font check without starting the editor, and `CONSOLE_WINDOW_GLYPH_AUDIT=1` reports any decorative character that grub-wiz draws without registering a fallback.
@@ -359,7 +358,7 @@ intel_pstate=disable"
 # This parameter is disabled
 #GRUB_DISABLE_RECOVERY=true
 ```
-- Tracked with special internal value (shown as `∎` in param data)
+- Tracked with special internal value (shown as `#comment` in param data)
 - Can be uncommented and given a value through the UI
 - Commented continuations are also supported (each line must start with `#`)
 

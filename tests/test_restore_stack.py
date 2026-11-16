@@ -53,6 +53,10 @@ class FakeWin:
         self.alerts = []
         self.flashes = []
 
+    @staticmethod
+    def _adopt_view(view):
+        """3.0 makes each screen current by adopting it on the window."""
+
     def alert(self, message=None, **_kwargs):
         """Record the alert instead of drawing it."""
         self.alerts.append(message)
@@ -119,11 +123,11 @@ def make_restore_screen(restore_ok):
         navigate_back=lambda: False,
         reinit_gw=lambda: calls.append('reinit'),
         reset_screen_stack=lambda: calls.append('reset'),
+        win=win,
     )
     screen = RestoreScreen.__new__(RestoreScreen)
     screen.gw = gw
     screen.app = gw
-    screen.win = win
     return screen, win, calls
 
 
@@ -152,12 +156,11 @@ def test_delete_asks_before_unlinking_the_selected_backup(tmp_path):
     doomed = tmp_path / '20990101-000000-DEADBEEF.custom.bak'
     doomed.write_text('state')
     win = FakeWin()
-    gw = FakeGw(ordered_backup_pairs=[('DEADBEEF', doomed)])
+    gw = FakeGw(ordered_backup_pairs=[('DEADBEEF', doomed)], win=win)
     gw.refresh_backup_list = lambda: gw.refreshed.append(True)
     screen = RestoreScreen.__new__(RestoreScreen)
     screen.gw = gw
     screen.app = gw
-    screen.win = win
 
     screen.delete_ACTION()
 
@@ -254,11 +257,11 @@ def test_restore_uses_the_selected_path_not_checksum_lookup():
         navigate_back=lambda: False,
         reinit_gw=lambda: None,
         reset_screen_stack=lambda: None,
+        win=win,
     )
     screen = RestoreScreen.__new__(RestoreScreen)
     screen.gw = gw
     screen.app = gw
-    screen.win = win
 
     screen.restore_chosen(selected)
 

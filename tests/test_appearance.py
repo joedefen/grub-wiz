@@ -1,13 +1,13 @@
-"""grub-wiz's wiring to console-window's appearance switch.
+"""grub-wiz's wiring to console-window's unified theme/appearance decision.
 
-The precedence rules, the mono role table and the fail-safe lookup live in
-``console_window.appearance`` and are tested there.  These tests only prove the
-two things this app owns: it seeds the process-wide switch from the flags it
-parsed, and its draw sites resolve roles through that switch.
+console-window 3.1 collapsed the two axes: ``Appearance.resolve_appearance()``
+returns one theme name, ``mono`` is a real theme, and ``Theme.set_active()`` is
+what synchronizes the color switch.  These tests prove the two things this app
+owns: it resolves the precedence once from the flags and remembered choice, and
+its draw sites resolve roles through the library switch.
 """
 
 import curses
-from types import SimpleNamespace
 
 from console_window import Theme, colors_enabled, set_colors_enabled
 
@@ -15,7 +15,7 @@ from grub_wiz import main as main_module
 
 
 class FakePrefs:
-    """The ``UiPrefs`` surface the seeding hook reads."""
+    """The ``UiPrefs`` surface the theme resolver reads."""
 
     def __init__(self, remembered=None):
         self.remembered = remembered
@@ -24,68 +24,50 @@ class FakePrefs:
         return self.remembered
 
 
-def apply_policy(no_color=False, theme=None, prefs=None):
-    """Call the seeding hook with the shape argparse hands the application."""
-    main_module.apply_color_policy(
-        SimpleNamespace(no_color=no_color, theme=theme), prefs)
+def resolve(theme=None, prefs=None):
+    """Call the resolver with the shape argparse hands the application."""
+    return main_module.initial_theme_name(theme, prefs)
 
 
-def test_the_application_seeds_the_switch_from_the_parsed_flags():
-    apply_policy(no_color=True)
-    assert colors_enabled() is False
-
-    apply_policy(no_color=False)
-    assert colors_enabled() is True
+def test_the_resolved_theme_is_a_canonical_name():
+    assert resolve() == 'default'
+    assert resolve(theme='nord') == 'nord'
+    assert resolve(prefs=FakePrefs('gruvbox')) == 'gruvbox'
 
 
-def test_the_no_color_flag_wins_over_a_theme():
-    apply_policy(no_color=True, theme='nord')
-    assert colors_enabled() is False
+def test_an_explicit_theme_wins_over_a_remembered_one():
+    assert resolve(theme='nord', prefs=FakePrefs('gruvbox')) == 'nord'
 
 
-def test_an_explicit_theme_asks_for_colour_even_under_no_color(monkeypatch):
-    """``--theme`` is a statement of intent, so it still asks for colour."""
+def test_mono_is_a_real_theme_and_survives_a_restart():
+    assert resolve(prefs=FakePrefs('mono')) == 'mono'
+    assert resolve(theme='mono') == 'mono'
+
+
+def test_the_environment_convention_selects_mono(monkeypatch):
     monkeypatch.setenv('NO_COLOR', '1')
 
-    apply_policy(theme='nord')
-    assert colors_enabled() is True
+    assert resolve() == 'mono'
 
 
-def test_the_environment_convention_is_honoured(monkeypatch):
+def test_an_explicit_theme_beats_no_color(monkeypatch):
+    """--theme is a statement of intent, so it still asks for colour."""
     monkeypatch.setenv('NO_COLOR', '1')
 
-    apply_policy()
-    assert colors_enabled() is False
+    assert resolve(theme='nord') == 'nord'
 
 
-def test_no_options_means_colour_on():
-    """Tests and embedded use pass no namespace at all."""
-    main_module.apply_color_policy(None)
-    assert colors_enabled() is True
+def test_no_color_beats_a_remembered_palette(monkeypatch):
+    monkeypatch.setenv('NO_COLOR', '1')
+
+    assert resolve(prefs=FakePrefs('nord')) == 'mono'
 
 
-def test_a_remembered_mono_choice_starts_with_colour_off():
-    apply_policy(prefs=FakePrefs('mono'))
-    assert colors_enabled() is False
+def test_a_stale_remembered_theme_degrades_to_the_default():
+    assert resolve(prefs=FakePrefs('a-theme-that-was-removed')) == 'default'
 
 
-def test_an_explicit_theme_overrides_a_remembered_mono():
-    """A one-run ``--theme`` is a request for colour, like passing it fresh."""
-    apply_policy(theme='nord', prefs=FakePrefs('mono'))
-    assert colors_enabled() is True
-
-
-def test_no_color_wins_over_a_remembered_colour_theme():
-    apply_policy(no_color=True, prefs=FakePrefs('nord'))
-    assert colors_enabled() is False
-
-
-def test_a_remembered_palette_keeps_colour_on():
-    apply_policy(prefs=FakePrefs('nord'))
-    assert colors_enabled() is True
-
-
-def test_a_broken_store_degrades_to_colour_on():
+def test_a_broken_store_degrades_to_the_default():
     """A cosmetic preference must never keep the editor from starting."""
 
     class Broken:
@@ -93,13 +75,19 @@ def test_a_broken_store_degrades_to_colour_on():
         def load():
             raise OSError('preferences are unreadable')
 
-    apply_policy(prefs=Broken())
-    assert colors_enabled() is True
+    assert resolve(prefs=Broken()) == 'default'
 
 
-def test_a_non_string_remembered_choice_degrades_to_colour_on():
+def test_a_non_string_remembered_choice_degrades_to_the_default():
     """A hand edit can put anything in the file; only names mean anything."""
-    apply_policy(prefs=FakePrefs(['not', 'a', 'theme']))
+    assert resolve(prefs=FakePrefs(['not', 'a', 'theme'])) == 'default'
+
+
+def test_set_active_synchronizes_the_colour_switch():
+    Theme.set_active(resolve(prefs=FakePrefs('mono')))
+    assert colors_enabled() is False
+
+    Theme.set_active(resolve(theme='nord'))
     assert colors_enabled() is True
 
 

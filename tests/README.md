@@ -88,7 +88,7 @@ GitHub Actions runs the suite on every push to `main`/`dev` and on every pull
 request. See [`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
 
 - Python 3.10, 3.11, 3.12 and 3.13 are tested on `ubuntu-24.04`. 3.10 is the
-  minimum supported version, imposed by the pinned `console-window==2.2.2`
+  minimum supported version, imposed by the pinned `console-window~=3.1.0`
   (`Requires-Python: >=3.10`) and matched by `requires-python` in
   [`pyproject.toml`](../pyproject.toml).
 - The workflow runs the same three gate commands `./bless` runs -- `ruff check`,
@@ -170,7 +170,7 @@ The test suite covers all ~25 validation rules with 6-8 test cases each, includi
 Each rule has tests covering:
 - ✅ **Should warn** - Actual configuration problems
 - ❌ **Should NOT warn** - Valid configurations including:
-  - Variable present but empty (`≡`)
+  - Variable present but empty (`#absent`)
   - Variable absent/commented
   - Variable with valid value
   - Edge cases specific to that rule
@@ -277,7 +277,7 @@ lookup.
 
 The retag path does need a window, so those tests use the `make_headless_win`
 fixture from [`conftest.py`](conftest.py): a real `ConsoleWindow` over a
-headless backend. That way the prompt rows, the `⚠️` wording and the status
+headless backend. That way the prompt rows, the `🔔` wording and the status
 line are the production ones; only `answer()`/`flash()`, which poll a real
 keyboard, are replaced. A refused rename is asserted through
 `current_status`, because that is what keeps the backup list on screen.
@@ -294,39 +294,51 @@ choice, because it is stored in the same field.
 
 ### `test_appearance.py`
 
-Covers grub-wiz's start-up seeding of `console_window.appearance`: the parsed
-`--no-color`/`--theme` flags, the `NO_COLOR` convention, and the remembered
-choice. A remembered `mono` starts with colour off, an explicit `--theme`
-overrides it for the run, `--no-color` beats a remembered palette, and a broken
-preferences store degrades to colour on instead of aborting start-up.
+Covers grub-wiz's one-value theme decision: `initial_theme_name()` resolves the
+`--theme` flag, the `NO_COLOR` convention and the remembered choice to one
+canonical theme (including the real `mono` theme). An explicit `--theme` wins,
+`NO_COLOR` selects `mono`, a remembered `mono` survives, a stale name degrades
+to `default`, and a broken preferences store degrades to the default instead of
+aborting start-up. `Theme.set_active()` is what synchronizes the colour switch.
 
 ### `test_glyphs.py`
 
-Pins grub-wiz's *vocabulary* against the registry in `console_window.glyphs`
-(the mechanism -- the table, detection, `--ascii` and the substitution applied
-while drawing -- is tested in the library's own suite). Every entry has a
-plain-ASCII form, the Unicode set is the default, `set_ascii()` swaps the
-meaningful ones consistently (`⚠️`→`(!)`, `✘`→`X`, `🟌`→`*`, `⮜–⮞`→`<->`), and
-the font check prints the real Unicode characters even in ASCII mode. Also pins
-the new shared behaviour: the library's transliterator downgrades grub-wiz's
-registered symbols inside arbitrary text (`abort 🛑` → `abort STOP`), leaves
-prose and parameter values alone (`Grüße`, `GRUB_CMDLINE_LINUX=...`), and
-`register_all()` restores the vocabulary after anything resets the registry.
+Pins grub-wiz's *role vocabulary* against the registry in
+`console_window.glyphs` (the mechanism -- the catalog, detection, `--ascii` and
+the substitution applied while drawing -- is tested in the library's own suite).
+Every role resolves to a catalog glyph with a plain-ASCII fallback, the Unicode
+set is the default, and the emoji stay emoji (`🔔`/`⭐`) and measure two cells
+in both spellings. REVIEW's severity mark is the one app-registered glyph:
+`✱` (U+2731), a one-cell East-Asian-N symbol with the ASCII fallback `*`, which
+the audit does not flag. The font check prints the real Unicode characters even
+in ASCII mode. Also pins that no library name (`ok`, `fail`, `stop`, `warn`) is
+shadowed by an app registration, and that the library's transliterator
+downgrades the app's symbols inside arbitrary text.
 
 ### `test_theme_picker.py`
 
 Covers the COLOR THEME screen built by `console_window.Theme`: it derives from
 `GrubWizScreen` (so ESC and `?` keep working there), `t` cycles to the next
 theme, wraps around, applies the theme to the live window, and remembers it
-through `PREFS_THEME_STORE` → `UiPrefs`. The cycle is every library palette and
-then grub-wiz's `mono` pseudo-theme: entering `mono` turns colour off and saves
-the choice, leaving it restores colour and a palette, and the header names the
-mode through the library's `theme_label()` hook. Also pins that a failing store
-never breaks the cycle, that the picker key is absent from the EDIT header but
-present on the help screen together with the font check, `--theme`/saved/default
-precedence (preserving a remembered `mono`), a stale saved theme degrading to
-the default, and that the HELP and THEME screens paint only ASCII rows in ASCII
-mode.
+through `PREFS_THEME_STORE` → `UiPrefs`. The cycle is `Theme.list_all()`, which
+already ends with the real `mono` theme: entering `mono` turns colour off and
+saves it, leaving it restores colour and a palette, and the generated picker
+names the mode itself. Also pins that a failing store never breaks the cycle,
+that the picker key is absent from the EDIT header but present on the help
+screen together with the font check, `--theme`/saved/default precedence
+(preserving a remembered `mono`), a stale saved theme degrading to the default,
+and that the HELP and THEME screens paint only ASCII rows in ASCII mode.
+
+### `test_main_wiring.py`
+
+The cheap upgrade test the console-window 3.1 notes recommend: builds the real
+screen classes, `ScreenStack` and `OptionSpinner` on a headless window, calls
+`GrubWiz.register_keys()`, and asserts the derived scopes, the single
+`quit`/`escape` built-ins, and that `?`/ESC/`q` dispatch through
+`do_key()` + `perform_actions()`. It also draws the help page and asserts
+`Keys for 'HOME':`, the HOME-scoped options and the Fonts section. Registration
+errors (a reserved key, a duplicate attribute, a navigation conflict) fire here
+before curses is involved.
 
 ### `test_cli_branches.py`
 

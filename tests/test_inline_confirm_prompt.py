@@ -8,19 +8,20 @@ directly below that row instead.
 
 The live prompt itself belongs to console-window (``begin_prompt()`` /
 ``handle_prompt_key()``), so these tests cover this application's share of it:
-the warning glyph, which band the line is drawn in, which row it belongs to,
-and the callback that finishes the action.
+the attention glyph, which band the line is drawn in, which row it belongs to,
+and the callback that finishes the action.  In 3.0 the drawing helpers are
+``Screen`` methods, so the tests drive a real screen over a headless window.
 """
 
 import curses as cs
 from pathlib import Path
 from types import SimpleNamespace
 
-from console_window import Theme
+from console_window import Screen, Theme
 from console_window.textwidth import string_width
 
 from grub_wiz import main as main_module
-from grub_wiz.main import GrubWiz, RestoreScreen, ReviewScreen
+from grub_wiz.main import GrubWiz, GrubWizScreen, RestoreScreen, ReviewScreen
 
 
 def make_gw(win):
@@ -31,16 +32,24 @@ def make_gw(win):
     return gw
 
 
+def make_screen(gw):
+    """A real GrubWizScreen adopted on *gw*'s window (the loop's first call)."""
+    screen = GrubWizScreen(gw)
+    screen.clear()
+    return screen
+
+
 def test_prompt_is_rendered_as_a_single_centered_header_line(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     assert gw.begin_confirm('Delete backup') is True
-    gw.add_confirm_header()
+    screen.add_confirm_header()
 
     # Bracketed by the glyph at both ends, and centered: the leading pad is
-    # computed from display cells, so the two ⚠️ (four cells together) do not
+    # computed from display cells, so the two 🔔 (four cells together) do not
     # shift the line off centre.
-    display = '⚠️  Delete backup  ["y" or ESC]  ⚠️'
+    display = '🔔  Delete backup  ["y" or ESC]  🔔'
     lead = (gw.win.get_pad_width() - string_width(display)) // 2
     assert gw.win.head.texts == [' ' * lead + display]
     assert lead > 0
@@ -48,9 +57,10 @@ def test_prompt_is_rendered_as_a_single_centered_header_line(headless_win):
 
 def test_the_header_prompt_is_bold(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     gw.begin_confirm('Delete backup')
-    gw.add_confirm_header()
+    screen.add_confirm_header()
 
     assert cs.A_BOLD in [attr for attr, _cells in gw.win.head.text_attrs[0]]
 
@@ -58,10 +68,11 @@ def test_the_header_prompt_is_bold(headless_win):
 def test_the_header_prompt_takes_the_attribute_it_is_given(headless_win):
     """A screen may paint the question with a theme role (REVIEW uses DANGER)."""
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
     colour = cs.A_BOLD | 0x0100
 
     gw.begin_confirm('Commit changes and update GRUB?')
-    gw.add_confirm_header(attr=colour)
+    screen.add_confirm_header(attr=colour)
 
     # Centering adds the leading pad with the same attribute, so the whole
     # band, not just its text, carries the colour.
@@ -71,6 +82,7 @@ def test_the_header_prompt_takes_the_attribute_it_is_given(headless_win):
 def test_confirming_key_runs_the_callback_after_the_prompt_is_gone(
         headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
     seen = []
     gw.begin_confirm('Commit', on_confirm=lambda answer: seen.append(
         (answer, gw.win.prompt_active, gw.win.passthrough_mode)))
@@ -82,7 +94,7 @@ def test_confirming_key_runs_the_callback_after_the_prompt_is_gone(
     assert seen == [('y', False, False)]
     assert gw.win.prompt_active is False
 
-    gw.add_confirm_header()
+    screen.add_confirm_header()
     assert gw.win.head.texts == []
 
 
@@ -144,7 +156,7 @@ def test_callback_may_start_the_next_prompt(headless_win):
 
     assert gw.win.prompt_active is True
     assert (gw.win.prompt_line.get_display_string()
-            == '⚠️  Second  ["y" or ESC]  ⚠️')
+            == '🔔  Second  ["y" or ESC]  🔔')
     assert gw.win.passthrough_mode is True
 
     gw.win.handle_prompt_key(ord('y'))
@@ -160,23 +172,25 @@ def test_begin_confirm_without_a_window_is_a_noop():
 
 def test_item_scope_does_not_add_a_header_line(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     gw.begin_confirm('Delete backup', scope='item', item_key='row-1')
-    gw.add_confirm_header()
+    screen.add_confirm_header()
 
     assert gw.win.head.texts == []
 
 
 def test_item_hint_is_drawn_dim_below_the_prompt_line(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     gw.begin_confirm('Edit value, then ENTER or ESC', mode='text', seed='5',
                      scope='item', item_key='GRUB_TIMEOUT',
                      hint='-1 for infinite, 0 or positive integer')
-    gw.add_confirm_item_line('GRUB_TIMEOUT')
+    screen.add_confirm_item_line('GRUB_TIMEOUT')
 
     assert gw.win.body.texts == [
-        '⚠️  Edit value, then ENTER or ESC: 5│',
+        '🔔  Edit value, then ENTER or ESC: 5│',
         '-1 for infinite, 0 or positive integer',
     ]
     # Detail lines, never pick targets: the row being edited stays selected.
@@ -202,53 +216,57 @@ def test_has_live_item_confirm_matches_only_its_own_row(headless_win):
 
 def test_item_scope_draws_the_prompt_only_after_its_item(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     gw.begin_confirm('Delete backup', scope='item', item_key='row-1')
-    gw.add_confirm_item_line('row-0')
+    screen.add_confirm_item_line('row-0')
     assert gw.win.body.texts == []
 
-    gw.add_confirm_item_line('row-1')
+    screen.add_confirm_item_line('row-1')
 
     # Item-scoped prompts are not centered: the line belongs to the row above
     # it, so it stays left-aligned like that row's other detail lines.
-    assert gw.win.body.texts == ['⚠️  Delete backup  ["y" or ESC]  ⚠️']
+    assert gw.win.body.texts == ['🔔  Delete backup  ["y" or ESC]  🔔']
 
 
 def test_item_prompt_disappears_once_it_is_answered(headless_win):
     gw = make_gw(headless_win)
+    screen = make_screen(gw)
 
     gw.begin_confirm('Delete backup', scope='item', item_key='row-1')
     gw.win.handle_prompt_key(27)
-    gw.add_confirm_item_line('row-1')
+    screen.add_confirm_item_line('row-1')
 
     assert gw.win.body.texts == []
 
 
-def test_header_hints_dim_while_a_prompt_is_live():
+def test_header_hints_dim_while_a_prompt_is_live(monkeypatch):
     """The hints stay on screen but stop competing with the live question."""
-    gw = object.__new__(GrubWiz)
     captured = []
-    gw.win = SimpleNamespace(
-        prompt_active=True,
-        add_fancy_header=lambda line, mode=None, line_attr=None:
-            captured.append((line, line_attr)))
-    gw.spins = SimpleNamespace(fancy_headers='Underline')
+    monkeypatch.setattr(
+        Screen, 'add_fancy_header',
+        lambda self, line, mode='Underline', search_pattern_attr=None,
+        line_attr=None: captured.append((line, line_attr)))
+    gw = SimpleNamespace(win=SimpleNamespace(prompt_active=True),
+                         spins=SimpleNamespace(fancy_headers='Underline'))
+    screen = GrubWizScreen(gw)
 
-    gw.add_fancy_header('REVIEW  ?:help [q]uit')
+    screen.add_fancy_header('REVIEW  ?:help [q]uit')
 
     assert captured == [('REVIEW  ?:help [q]uit', cs.A_DIM)]
 
 
-def test_header_hints_keep_their_style_when_no_prompt_is_live():
-    gw = object.__new__(GrubWiz)
+def test_header_hints_keep_their_style_when_no_prompt_is_live(monkeypatch):
     captured = []
-    gw.win = SimpleNamespace(
-        prompt_active=False,
-        add_fancy_header=lambda line, mode=None, line_attr=None:
-            captured.append((line, line_attr)))
-    gw.spins = SimpleNamespace(fancy_headers='Underline')
+    monkeypatch.setattr(
+        Screen, 'add_fancy_header',
+        lambda self, line, mode='Underline', search_pattern_attr=None,
+        line_attr=None: captured.append((line, line_attr)))
+    gw = SimpleNamespace(win=SimpleNamespace(prompt_active=False),
+                         spins=SimpleNamespace(fancy_headers='Underline'))
+    screen = GrubWizScreen(gw)
 
-    gw.add_fancy_header('REVIEW  ?:help [q]uit')
+    screen.add_fancy_header('REVIEW  ?:help [q]uit')
 
     assert captured == [('REVIEW  ?:help [q]uit', None)]
 
@@ -259,8 +277,8 @@ def test_review_header_appends_the_live_confirmation_after_its_hints(
     screen = object.__new__(ReviewScreen)
     calls = []
     screen.gw = SimpleNamespace(
-        hidden_stats=SimpleNamespace(warn=0),
-        add_confirm_header=lambda **kwargs: calls.append(kwargs))
+        hidden_stats=SimpleNamespace(warn=0))
+    screen.add_confirm_header = lambda **kwargs: calls.append(kwargs)
     screen.add_common_head1 = lambda title: calls.append('head1')
     screen.add_common_head2 = lambda header: calls.append('head2')
 
@@ -309,11 +327,11 @@ def make_restore_screen(chosen, older, drawn, asked):
             checksum_matches=lambda *args: False,
             tag_from_name=lambda name: 'RESYNC'),
         grub_checksum='NEW',
-        add_confirm_item_line=lambda key: drawn.append(('confirm', key)),
         request_backup_tag=lambda key, seed='': asked.append((key, seed)))
-    screen.win = SimpleNamespace(
-        pick_pos=0,
-        add_body=lambda text, context=None: drawn.append(('row', text)))
+    # The writers are Screen methods in 3.0; record the composed order here.
+    screen.add_body = lambda text, context=None: drawn.append(('row', text))
+    screen.add_confirm_item_line = (
+        lambda key: drawn.append(('confirm', key)))
     screen.baseline_bak = older
     return screen
 
@@ -324,7 +342,7 @@ def test_restore_body_places_the_tag_prompt_under_the_backup_it_renames():
     drawn, asked = [], []
     screen = make_restore_screen(chosen, older, drawn, asked)
 
-    RestoreScreen.add_body(screen)
+    RestoreScreen.draw_body(screen)
 
     assert [kind for kind, _ in drawn] == ['row', 'confirm', 'row', 'confirm']
     assert drawn[1] == ('confirm', chosen)

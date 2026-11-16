@@ -15,6 +15,7 @@ import subprocess
 import time
 from typing import Optional, Set
 from ruamel.yaml import YAML, YAMLError
+from .Glyphs import Glyphs
 
 try:
     from .UserConfigDir import UserConfigDir
@@ -412,7 +413,7 @@ class ParamDiscovery:
                 print_set('Extra (found but unknown)', '+', extra)
 
             if expected:
-                print_set("✓ Perfect match", '=', expected)
+                print_set(f"{Glyphs.get('check')} Perfect match", '=', expected)
 
     def get_absent(self, param_list: list) -> Set[str]:
         """

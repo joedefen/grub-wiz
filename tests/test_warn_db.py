@@ -104,24 +104,6 @@ def test_repeated_identical_audit_stays_clean(warn_db):
     assert warn_db.all_info == {key: 3}
 
 
-class FakeWin:
-    """Collect body lines instead of drawing them."""
-
-    def __init__(self):
-        self.cols = 100
-        self.lines = []
-        self.pick_pos = 0
-        self.picked_context = None
-
-    def add_body(self, line, **_kwargs):
-        """Record a rendered body line."""
-        self.lines.append(line)
-
-    def get_picked_context(self):
-        """WarnScreen.draw_head() needs this; the body does not use it."""
-        return self.picked_context
-
-
 class FakeValidator:
     """Return a warning snapshot that the test can swap between redraws."""
 
@@ -134,10 +116,10 @@ class FakeValidator:
         return dict(self.current_warns), dict(self.all_info)
 
 
-def make_warn_screen(warn_db, current_warns, all_info, context):
-    """Build a WarnScreen over collecting fakes and seed its entry target."""
-    win = FakeWin()
-    win.picked_context = context
+def make_warn_screen(make_headless_win, warn_db, current_warns, all_info,
+                     context):
+    """Build a WarnScreen over a real headless window and seed its target."""
+    win = make_headless_win(rows=40, cols=100)
     validator = FakeValidator()
     validator.all_info = dict(all_info)
     validator.current_warns = dict(current_warns)
@@ -148,13 +130,14 @@ def make_warn_screen(warn_db, current_warns, all_info, context):
         param_values={},
     )
     screen = WarnScreen(gw)
+    screen.clear()
     screen.set_entry_from_context(context)
     return screen, win
 
 
-def test_warn_screen_redraws_live_warnings(warn_db):
+def test_warn_screen_redraws_live_warnings(warn_db, make_headless_win):
     """The warnings screen must not render the startup snapshot forever."""
-    win = FakeWin()
+    win = make_headless_win(rows=40, cols=100)
     validator = FakeValidator()
     gw = SimpleNamespace(
         win=win,
@@ -166,23 +149,25 @@ def test_warn_screen_redraws_live_warnings(warn_db):
 
     stale = WarnDB.make_key('GRUB_TIMEOUT', 'startup warning')
     validator.all_info = {stale: 2}
+    screen.clear()
     screen.draw_body()
-    assert any('startup warning' in line for line in win.lines)
+    assert any('startup warning' in line for line in screen.body.texts)
 
     # A later edit replaces the warning set; a redraw must show only the new
     # warning and update the database the screen reads from.
     fresh = WarnDB.make_key('GRUB_CMDLINE_LINUX', 'post-edit warning')
     validator.all_info = {fresh: 4}
-    win.lines.clear()
+    screen.clear()
     screen.draw_body()
 
-    rendered = '\n'.join(win.lines)
+    rendered = '\n'.join(screen.body.texts)
     assert 'post-edit warning' in rendered
     assert 'startup warning' not in rendered
     assert warn_db.all_info == {fresh: 4}
 
 
-def test_warn_screen_targets_first_shown_current_warning(warn_db):
+def test_warn_screen_targets_first_shown_current_warning(warn_db,
+                                                         make_headless_win):
     """A parameter row lands on its first warning that is not inhibited."""
     hidden = WarnDB.make_key('GRUB_TIMEOUT', 'hidden warning')
     shown = WarnDB.make_key('GRUB_TIMEOUT', 'shown warning')
@@ -194,15 +179,17 @@ def test_warn_screen_targets_first_shown_current_warning(warn_db):
     current = {'GRUB_TIMEOUT': [('***', 'hidden warning'),
                                 ('***', 'shown warning')]}
 
-    screen, win = make_warn_screen(warn_db, current, all_info, context)
+    screen, win = make_warn_screen(
+        make_headless_win, warn_db, current, all_info, context)
     screen.draw_body()
 
     # Sorted rows: DEFAULT, TIMEOUT hidden, TIMEOUT shown.  The shown warning
     # is later in the list but wins over the hidden one for the same parameter.
-    assert win.pick_pos == 2
+    assert screen.pick_pos == 2
 
 
-def test_warn_screen_falls_back_to_first_hidden_current_warning(warn_db):
+def test_warn_screen_falls_back_to_first_hidden_current_warning(
+        warn_db, make_headless_win):
     """When every current warning is inhibited, the first one is selected."""
     hidden_a = WarnDB.make_key('GRUB_TIMEOUT', 'hidden a')
     hidden_b = WarnDB.make_key('GRUB_TIMEOUT', 'hidden b')
@@ -214,13 +201,15 @@ def test_warn_screen_falls_back_to_first_hidden_current_warning(warn_db):
     current = {'GRUB_TIMEOUT': [('***', 'hidden a'),
                                 ('***', 'hidden b')]}
 
-    screen, win = make_warn_screen(warn_db, current, all_info, context)
+    screen, win = make_warn_screen(
+        make_headless_win, warn_db, current, all_info, context)
     screen.draw_body()
 
-    assert win.pick_pos == 0
+    assert screen.pick_pos == 0
 
 
-def test_warn_screen_honours_an_exact_selected_warning(warn_db):
+def test_warn_screen_honours_an_exact_selected_warning(warn_db,
+                                                       make_headless_win):
     """A selected warning row stays the target even when it is inhibited."""
     hidden = WarnDB.make_key('GRUB_TIMEOUT', 'hidden warning')
     shown = WarnDB.make_key('GRUB_TIMEOUT', 'shown warning')
@@ -229,7 +218,8 @@ def test_warn_screen_honours_an_exact_selected_warning(warn_db):
     warn_db.inhibit(hidden, True)
     context = SimpleNamespace(genre='warn', warn_key=hidden)
 
-    screen, win = make_warn_screen(warn_db, {}, all_info, context)
+    screen, win = make_warn_screen(
+        make_headless_win, warn_db, {}, all_info, context)
     screen.draw_body()
 
-    assert win.pick_pos == 0
+    assert screen.pick_pos == 0

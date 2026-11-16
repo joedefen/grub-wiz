@@ -22,17 +22,14 @@ from console_window.window import render_nav_help
 
 def test_grub_wiz_takes_only_the_cursor_keys():
     """LEFT/RIGHT cycle values; every other navigation key stays with the library."""
-    assert cli.TAKEN_NAV_KEYS == {
-        curses.KEY_LEFT: 'prev value',
-        curses.KEY_RIGHT: 'next value',
-    }
+    assert cli.TAKEN_NAV_KEYS == [curses.KEY_LEFT, curses.KEY_RIGHT]
 
 
 def test_configuring_grub_wiz_does_not_mutate_the_library_key_set():
     ConsoleWindowOpts(taken_nav_keys=cli.TAKEN_NAV_KEYS)
 
     assert {curses.KEY_LEFT, curses.KEY_RIGHT} <= NAVIGATION_KEYS
-    assert cli.TAKEN_NAV_KEYS.keys() <= NAVIGATION_KEYS
+    assert set(cli.TAKEN_NAV_KEYS) <= NAVIGATION_KEYS
 
 
 def test_effective_navigation_set_drops_only_the_taken_keys():
@@ -83,14 +80,17 @@ def test_ctrl_c_is_delivered_as_the_quit_key():
         signals.ctrl_c_flag = False
 
 
-def test_nav_help_credits_taken_keys_to_the_app():
-    """The help screen must not advertise stolen keys as navigation."""
+def test_nav_help_prunes_taken_keys_instead_of_repeating_them():
+    """3.1 removes a taken key from its chunk; there is no second ``App:`` line."""
     opts = ConsoleWindowOpts(taken_nav_keys=cli.TAKEN_NAV_KEYS)
-    lines = render_nav_help(opts.nav_keys, opts.taken_nav_keys)
+    lines = render_nav_help(opts.nav_keys)
 
-    app_line = next(line for line in lines if line.startswith('App:'))
-    assert '\u2190: prev value' in app_line
-    assert '\u2192: next value' in app_line
+    rendered = '\n'.join(lines)
+    assert 'App:' not in rendered
+    # The cursor keys are no longer advertised as navigation.
+    assert 'LEFT' not in rendered
+    assert 'RIGHT' not in rendered
     # The remaining default bindings are still documented.
-    assert any('DOWN: down one row' in line for line in lines)
-    assert any('UP: up one row' in line for line in lines)
+    assert any('down: j/DOWN' in line for line in lines)
+    assert any('up: k/UP' in line for line in lines)
+    assert opts.taken_nav_keys == [curses.KEY_LEFT, curses.KEY_RIGHT]

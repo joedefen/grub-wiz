@@ -1,59 +1,35 @@
 """Dropdown/guidance rows must not become navigation stops.
 
 The EDIT and REVIEW bodies emit dropdown rows only under the selected
-parameter.  Those rows shift every row below them, so ``win.pick_pos`` from the
+parameter.  Those rows shift every row below them, so the pick position from the
 previous frame cannot be reused as a direct row index after a move.  The app
 records a stable identity (parameter name / warning key) for every pickable row
 and maps the old index through it on the next draw.
 
-Without that mapping, DOWN from a parameter with a tall dropdown skipped the
-next parameter entirely (the old row landed on a later parameter once the
-dropdown collapsed), and dropdown rows that were left pickable made DOWN need a
-second press.
+In 3.0 the content writers live on ``Screen``, so these tests drive real screens
+over a headless window and read the rows back off the screen that wrote them.
 """
 
+import curses as cs
 from types import SimpleNamespace
 
 from console_window import Context, Theme
 
 from grub_wiz import main as main_module
-from grub_wiz.main import GrubWiz, HomeScreen
+from grub_wiz.main import GrubWizScreen, HomeScreen
 
 
-class FakeWin:
-    """Record the context of every body row the screen emits."""
-
-    cols = 100
-    scroll_view_size = 40
-
-    def __init__(self, pick_pos):
-        self.pick_pos = pick_pos
-        self.contexts = []
-        self.body = SimpleNamespace(row_cnt=0, contexts=self.contexts)
-        self.lines = []
-        self.attrs = []
-
-    def reset(self):
-        """Mimic ConsoleWindow.clear() between frames."""
-        self.lines.clear()
-        self.attrs.clear()
-        self.contexts.clear()
-        self.body.row_cnt = 0
-
-    def add_body(self, line, attr=None, context=None):
-        """Record the rendered row, its attribute and its Context."""
-        self.lines.append(line)
-        self.attrs.append(attr)
-        self.contexts.append(context)
-        self.body.row_cnt += 1
+def row_attrs(body):
+    """First attribute of each body row (A_NORMAL when the row is plain)."""
+    return [rle[0][0] if rle else 0 for rle in body.text_attrs]
 
 
-def make_home_screen(pick_pos, live_key=None):
+def make_home_screen(make_headless_win, pick_pos, live_key=None):
     """Build a HomeScreen with a tall dropdown on the selected parameter.
 
     *live_key* is the parameter whose inline edit prompt is live, if any.
     """
-    win = FakeWin(pick_pos)
+    win = make_headless_win(rows=40, cols=100)
     param_cfg = {
         'GRUB_TIMEOUT': {
             'default': '5',
@@ -96,39 +72,51 @@ def make_home_screen(pick_pos, live_key=None):
         show_hidden_params=False,
         drop_down_lines=drop_down_lines,
         has_live_item_confirm=lambda key: key == live_key,
-        add_confirm_item_line=lambda key: (
-            win.add_body(f'prompt:{key}') if key == live_key else None),
+        confirm_scope='header',
+        confirm_item_key=None,
         spins=SimpleNamespace(guide='Enums'),
         param_name_wid=16,
     )
-    screen = HomeScreen.__new__(HomeScreen)
-    screen.gw = gw
-    screen.win = win
-    screen.search = ''
-    screen.regex = None
+    screen = HomeScreen(gw)
+    screen.clear()
+    screen.pick_pos = pick_pos
+    if live_key is not None:
+        def confirm(key):
+            if key == live_key:
+                screen.add_body(f'prompt:{key}')
+        screen.add_confirm_item_line = confirm
     return screen, win
 
 
-def test_home_dropdown_rows_are_not_pickable():
+def make_plain_screen(make_headless_win):
+    """A bare GrubWizScreen over a headless window, for helper rows."""
+    win = make_headless_win(rows=40, cols=100)
+    app = SimpleNamespace(win=win, spins=SimpleNamespace(guide='Off'))
+    screen = GrubWizScreen(app)
+    screen.clear()
+    return screen, win
+
+
+def test_home_dropdown_rows_are_not_pickable(make_headless_win):
     """The dropdown rows emitted under the selected parameter are detail."""
-    screen, win = make_home_screen(pick_pos=1)
+    screen, win = make_home_screen(make_headless_win, pick_pos=1)
 
     screen.draw_body()
 
     # row 0: section header, row 1: GRUB_TIMEOUT (picked),
-    # rows 2-6: its dropdown, rows 7-8: next section header.
-    assert win.contexts[1].genre == 'param'
-    assert win.contexts[1].pickable is True
+    # rows 2-6: its dropdown, row 7: blank, row 8: next section header.
+    assert screen.body.contexts[1].genre == 'param'
+    assert screen.body.contexts[1].pickable is True
     for row in range(2, 7):
-        assert win.contexts[row].genre == 'TRANSIENT'
-        assert win.contexts[row].pickable is False
+        assert screen.body.contexts[row].genre == 'TRANSIENT'
+        assert screen.body.contexts[row].pickable is False
 
 
-def test_down_from_tall_dropdown_lands_on_next_parameter():
+def test_down_from_tall_dropdown_lands_on_next_parameter(make_headless_win):
     """DOWN must skip the collapsed rows and land on the *next* parameter."""
-    screen, win = make_home_screen(pick_pos=1)
+    screen, win = make_home_screen(make_headless_win, pick_pos=1)
     screen.draw_body()
-    assert win.pick_pos == 1
+    assert screen.pick_pos == 1
 
     # The library skips the five non-pickable dropdown rows and the blank /
     # section-header rows, landing on GRUB_DEFAULT in the *old* layout.
@@ -136,39 +124,39 @@ def test_down_from_tall_dropdown_lands_on_next_parameter():
                        if key[1] == 'GRUB_DEFAULT')
     assert default_row == 9
     assert all(context.pickable is False
-               for context in win.contexts[2:default_row])
-    win.pick_pos = default_row
+               for context in screen.body.contexts[2:default_row])
+    screen.pick_pos = default_row
 
     # Next frame: the TIMEOUT dropdown is gone, so rows shift up by five.  The
     # anchor mapping must keep GRUB_DEFAULT selected rather than following the
     # stale row index down to DISABLE_OS_PROBER or beyond.
-    win.reset()
+    screen.clear()
     screen.draw_body()
 
-    assert win.pick_pos == 4
-    assert win.contexts[4].genre == 'param'
-    assert win.contexts[4].param_name == 'GRUB_DEFAULT'
-    assert win.contexts[1].param_name == 'GRUB_TIMEOUT'
+    assert screen.pick_pos == 4
+    assert screen.body.contexts[4].genre == 'param'
+    assert screen.body.contexts[4].param_name == 'GRUB_DEFAULT'
+    assert screen.body.contexts[1].param_name == 'GRUB_TIMEOUT'
     # No TIMEOUT dropdown between the two parameters now.
-    assert win.contexts[2].genre == 'DECOR'
-    assert win.contexts[3].genre == 'DECOR'
+    assert screen.body.contexts[2].genre == 'DECOR'
+    assert screen.body.contexts[3].genre == 'DECOR'
 
 
-def test_live_inline_edit_replaces_the_dropdown_under_its_row():
+def test_live_inline_edit_replaces_the_dropdown_under_its_row(
+        make_headless_win):
     """The prompt must sit next to the row whose old value it shows."""
-    screen, win = make_home_screen(pick_pos=1, live_key='GRUB_TIMEOUT')
+    screen, win = make_home_screen(make_headless_win, pick_pos=1,
+                                   live_key='GRUB_TIMEOUT')
 
     screen.draw_body()
 
-    assert 'prompt:GRUB_TIMEOUT' in win.lines
-    assert '    detail' not in win.lines
+    assert 'prompt:GRUB_TIMEOUT' in screen.body.texts
+    assert '    detail' not in screen.body.texts
 
 
-def test_wrapped_detail_continuations_are_not_pickable():
+def test_wrapped_detail_continuations_are_not_pickable(make_headless_win):
     """Continuation rows of a wrapped picked line are detail, not stops."""
-    win = FakeWin(pick_pos=0)
-    screen = GrubWiz.__new__(GrubWiz)
-    screen.win = win
+    screen, win = make_plain_screen(make_headless_win)
 
     screen.add_wrapped_body_line(
         'a detail line long enough to wrap at one hundred columns ' * 3,
@@ -176,25 +164,19 @@ def test_wrapped_detail_continuations_are_not_pickable():
         is_current=True,
         context=Context(genre='warn', warn_key='GRUB_TIMEOUT warning'))
 
-    assert len(win.contexts) > 1
-    assert win.contexts[0].genre == 'warn'
-    assert win.contexts[0].pickable is True
-    for context in win.contexts[1:]:
+    assert len(screen.body.contexts) > 1
+    assert screen.body.contexts[0].genre == 'warn'
+    assert screen.body.contexts[0].pickable is True
+    for context in screen.body.contexts[1:]:
         assert context.genre == 'TRANSIENT'
         assert context.pickable is False
 
 
-def test_wrapped_detail_rows_carry_the_attribute_they_were_given():
-    """A coloured warning must stay coloured on its wrapped rows.
-
-    REVIEW paints warnings with the theme's WARNING pair and the wrapping is
-    what makes a long warning a multi-row block, so the attribute has to
-    survive both the picked (reformatted) and the plain path.
-    """
+def test_wrapped_detail_rows_carry_the_attribute_they_were_given(
+        make_headless_win):
+    """A coloured warning must stay coloured on its wrapped rows."""
     colour = 0x0300
-    win = FakeWin(pick_pos=0)
-    screen = GrubWiz.__new__(GrubWiz)
-    screen.win = win
+    screen, win = make_plain_screen(make_headless_win)
 
     screen.add_wrapped_body_line(
         'a detail line long enough to wrap at one hundred columns ' * 3,
@@ -203,48 +185,50 @@ def test_wrapped_detail_rows_carry_the_attribute_they_were_given():
         attr=colour,
         context=Context(genre='warn', warn_key='GRUB_TIMEOUT warning'))
 
-    assert len(win.attrs) > 1
-    assert set(win.attrs) == {colour}
+    attrs = row_attrs(screen.body)
+    assert len(attrs) > 1
+    assert set(attrs) == {colour}
 
-    win.reset()
+    screen.clear()
     screen.add_wrapped_body_line('short warning', indent=4, is_current=False,
                                  attr=colour)
 
-    assert win.attrs == [colour]
+    assert row_attrs(screen.body) == [colour]
 
 
-def test_home_guidance_rows_carry_the_info_role(monkeypatch):
-    """EDIT colours its dropdown INFO, exactly as REVIEW does.
-
-    Guidance text and enum explanations are advice, not state, so they take
-    the theme's informational role on both screens that emit them.
-    """
+def test_home_guidance_rows_carry_the_info_role(monkeypatch,
+                                               make_headless_win):
+    """EDIT colours its dropdown INFO, exactly as REVIEW does."""
     monkeypatch.setattr(main_module, 'theme_attr', lambda pair: pair << 8)
-    screen, win = make_home_screen(pick_pos=1)
+    screen, win = make_home_screen(make_headless_win, pick_pos=1)
 
     screen.draw_body()
 
-    transient = [attr for attr, context in zip(win.attrs, win.contexts)
+    attrs = row_attrs(screen.body)
+    transient = [attr for attr, context in zip(attrs, screen.body.contexts)
                  if context is not None and context.genre == 'TRANSIENT']
     assert transient
     assert set(transient) == {Theme.INFO << 8}
 
     # The parameter's own rows are state and stay plain.
-    param = [attr for attr, context in zip(win.attrs, win.contexts)
+    param = [attr for attr, context in zip(attrs, screen.body.contexts)
              if context is not None and context.genre == 'param']
-    assert param and set(param) == {None}
+    assert param and set(param) == {cs.A_NORMAL}
 
 
-def test_home_wrapped_value_continuations_stay_plain(monkeypatch):
+def test_home_wrapped_value_continuations_stay_plain(monkeypatch,
+                                                      make_headless_win):
     """A wrapped value is still state: only the advice below it is INFO."""
     monkeypatch.setattr(main_module, 'theme_attr', lambda pair: pair << 8)
-    screen, win = make_home_screen(pick_pos=1)
+    screen, win = make_home_screen(make_headless_win, pick_pos=1)
     screen.body_param_lines = lambda name, is_current: ['GRUB_TIMEOUT   5',
                                                         '    wrapped value']
 
     screen.draw_body()
 
-    boxed = [(line, attr) for line, attr in zip(win.lines, win.attrs)
+    attrs = row_attrs(screen.body)
+    boxed = [(line, attr) for line, attr
+             in zip(screen.body.texts, attrs)
              if any(char in line for char in '╭│╰')]
-    assert boxed[0] == ('   ╭wrapped value', None)
+    assert boxed[0] == ('   ╭wrapped value', cs.A_NORMAL)
     assert {attr for _line, attr in boxed[1:]} == {Theme.INFO << 8}

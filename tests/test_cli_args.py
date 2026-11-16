@@ -89,15 +89,14 @@ def test_discovery_show_dumps_defined_params(monkeypatch, fake_wiz):
     assert fake_wiz.param_discovery.state is None
 
 
-def test_no_color_is_absent_unless_given():
-    """console-window supplies the switch; absent means "detect", not "off".
-
-    The theme picker can lift an explicit ``--no-color`` again.
-    """
+def test_mono_is_the_color_off_switch():
+    """console-window 3.x removed ``--no-color``; ``--theme mono`` replaced it."""
     parser = cli.build_parser()
 
-    assert parser.parse_args([]).no_color is None
-    assert parser.parse_args(['--no-color']).no_color is True
+    assert parser.parse_args([]).theme is None
+    assert parser.parse_args(['--theme', 'mono']).theme == 'mono'
+    with pytest.raises(SystemExit):
+        parser.parse_args(['--no-color'])
 
 
 def test_run_cli_tears_down_curses_on_system_exit(monkeypatch):

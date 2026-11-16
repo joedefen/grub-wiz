@@ -20,7 +20,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
     "ruamel.yaml>=0.18.17",
-    "console-window==2.2.2",
+    # ``~=`` means "the latest 3.1.x": accepts 3.1.0 and 3.1.7, rejects 3.2.0
+    # and 3.0.0.  Version 3.1 folded the two-cell mark API into ``Glyphs`` and
+    # moved content writers onto ``Screen``; see ../cw3upg.md.
+    "console-window~=3.1.0",
 ]
 classifiers = [
     "Environment :: Console",
