@@ -1,0 +1,37 @@
+[build-system]
+requires = ["flit_core>=3.12,<5"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "grub-wiz"
+dynamic = ["version"]
+readme = "README.md"
+description = "Grub config assistant"
+authors = [
+    { name = "Joe Defen", email = "joedef@duck.com" }
+]
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "ruamel.yaml>=0.18.17",
+    "console-window~=3.1.0",
+]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Boot",
+    "Topic :: System :: Systems Administration",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/joedefen/grub-wiz"
+
+[project.scripts]
+grub-wiz = "grub_wiz.main:run_cli"

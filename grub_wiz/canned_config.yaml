@@ -1,0 +1,459 @@
+_distro_vars_:
+  grub_cfg:
+    - /boot/grub/grub.cfg        # Priority 1 (Arch/Debian)
+    - /boot/grub2/grub.cfg       # Priority 2 (Fedora/SUSE)
+    - /boot/efi/EFI/fedora/grub.cfg
+  
+  update_grub:
+    - grub-mkconfig
+    - grub2-mkconfig
+    - update-grub
+
+  update_initramfs:
+    - update-initramfs           # Debian/Ubuntu
+    - dracut                     # RHEL/Fedora/SUSE/Rocky
+    - mkinitcpio                 # Arch
+    - mkinitfs                   # Alpine
+    - genkernel                  # Gentoo
+
+  etc_grub:
+    - /etc/default/grub
+
+_update_initramfs_triggers_:
+  # Kernel cmdline parameters that affect early boot and require initramfs rebuild
+  # These are checked against GRUB_CMDLINE_LINUX, GRUB_CMDLINE_LINUX_DEFAULT,
+  # and GRUB_CMDLINE_LINUX_RECOVERY
+
+  gpu_drivers:
+    - i915              # Intel graphics
+    - nvidia            # NVIDIA proprietary
+    - nouveau           # NVIDIA open source
+    - amdgpu            # AMD Radeon
+    - radeon            # AMD legacy
+    - mgag200           # Matrox
+    - ast               # ASPEED
+
+  kernel_mode_setting:
+    - nomodeset         # Disable kernel mode setting
+    - modeset           # Enable/configure KMS
+
+  module_control:
+    - module_blacklist  # Blacklist modules
+    - modprobe          # Module parameters
+    - rd.driver         # Dracut driver control
+
+  root_filesystem:
+    - root=             # Root device change
+    - rootflags         # Root mount options
+    - rootfstype        # Root filesystem type
+
+  encryption_lvm:
+    - rd.luks           # LUKS encryption (dracut)
+    - rd.lvm            # LVM volumes (dracut)
+    - cryptdevice       # Arch LUKS
+
+  acpi_hardware:
+    - acpi              # ACPI control
+    - pci               # PCI subsystem
+    - iommu             # IOMMU settings
+
+  early_console:
+    - console=          # Early console
+    - earlyprintk       # Early kernel debug
+    - debug             # Kernel debug mode
+
+  network_boot:
+    - rd.neednet        # Network required for boot (dracut)
+    - ip=               # Network configuration
+    - bootdev           # Boot device network config
+
+#   ----- SCHEMA -----
+#   {section-name}:
+#     {parameter-name}:
+#       default: {default value from GRUB docs}
+#       edit_re: {regex} # "edit" value only allow if non-empty
+#       enums: # list of values for 'type: cycle'
+#         - value: meaning
+#       guidance: {text} # < detailed parameter help
+#
+#   A regex spec in _re_specs_ may set allow_command_sub: true to let its
+#   parameters accept a whole-value $(...) or `...` command substitution
+#   (needed for GRUB_DISTRIBUTOR).  Values must still be one shell word:
+#   whitespace, ';', '&', '|', '<', '>' and quotes require quoting because
+#   /etc/default/grub is sourced by the distro's shell scripts.
+#
+_re_specs_:
+  re_quoted_image_file:
+    re: (?i)^(''|""|['"].*\.(png|jpg|jpeg|tga|bmp)['"])?$
+    human: quoted (png/jpg/jpeg/tga/bmp) path or empty quotes
+
+  re_timeout:
+    re: ^(-1|\d+)$
+    human: number (-1 for infinite, 0 or positive integer)
+
+  re_optional_number:
+    re: ^(\d+)?$
+    human: positive number or empty
+
+  re_required_number:
+    re: ^\d+$
+    human: positive number (required)
+
+  re_default_or_saved_or_quoted:
+    re: ^(\d+|saved|".*"|'.*')$
+    human: "number, 'saved', or quoted menu entry title"
+
+  re_optional_quoted_string:
+    re: ^(".*"|'.*'|)$
+    human: quoted string or empty
+
+  re_required_quoted_string:
+    re: ^(".*"|'.*')$
+    human: quoted string (required)
+
+  re_quoted_or_command_sub:
+    re: ^(".*"|'.*'|\$\(.*\)|`.*`)$
+    human: "quoted string, $(command), or `command`"
+    allow_command_sub: true
+
+  re_initrd_images:
+    re: ^("[\w\-./ ]+\.img"|'[\w\-./ ]+\.img'|([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?)$
+    human: space-separated .img filenames (quote multi-image lists) or empty
+
+  re_theme_file:
+    re: (?i)^(''|""|"[\w\-./ ]*theme\.txt"|'[\w\-./ ]*theme\.txt'|[\w\-./]*theme\.txt)?$
+    human: path to theme.txt file (quote paths with spaces) or empty
+
+  re_gfxmode:
+    re: ^(auto|keep|(?:[1-9]\d{2,3}x[1-9]\d{2,3}))(?:,(?:auto|keep|[1-9]\d{2,3}x[1-9]\d{2,3}))*$
+    human: "'auto', 'keep', or comma-separated WxH resolutions (no spaces)"
+
+  re_gfxpayload:
+    re: ^(text|keep|[1-9]\d{2,3}x[1-9]\d{2,3})?$
+    human: "'text', 'keep', resolution (WxH), or empty"
+
+  re_init_tune:
+    re: ^(".*")?$
+    human: quoted beep sequence or empty
+
+  re_serial_command:
+    re: ^".*"$|^$
+    human: quoted serial configuration string or empty
+
+Boot Timeout:
+  GRUB_TIMEOUT:
+    default: 5
+    edit_re: re_timeout
+    enums:
+      -1: infinite wait
+      0: no wait
+      2: short wait
+      5: medium wait
+      15: healthy wait
+      60: long wait
+    guidance: "The timeout for the GRUB menu display.
+      \n%ENUMS%"
+
+  GRUB_TIMEOUT_STYLE:
+    default: menu
+    edit_re:
+    enums:
+      menu:  Show the full menu during the timeout period.
+      countdown: Show a countdown display instead of the menu.
+      hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
+    guidance: "What to show during TIMEOUT period. Choices:
+      \n%ENUMS%"
+
+  GRUB_HIDDEN_TIMEOUT:
+    default: ''
+    edit_re: re_optional_number
+    enums:
+      '': Not set (disabled).
+      0: No hidden timeout - show menu immediately.
+      3: Brief hidden countdown before showing menu.
+      5: Medium hidden countdown before showing menu.
+    guidance: "DEPRECATED: Use GRUB_TIMEOUT with GRUB_TIMEOUT_STYLE='hidden' instead.
+      \n: Legacy parameter from GRUB versions prior to 2.00.
+      \n: Modern GRUB (2.00+) uses GRUB_TIMEOUT_STYLE to control menu visibility.
+      \n: Some systems may still honor this for backward compatibility.
+      \n%ENUMS%"
+
+  GRUB_RECORDFAIL_TIMEOUT:
+    default: 30
+    edit_re: re_required_number
+    enums:
+      10: Short wait after error.
+      30: Default wait after error.
+      60: Long wait after error.
+    guidance: "If the previous boot failed (e.g., kernel panic), GRUB shows a recovery menu.
+      \n: This sets the timeout (in seconds) for that specific recovery menu.
+      \n%ENUMS%"
+
+Menu Entries:
+  GRUB_DEFAULT:
+    default: 0
+    edit_re: re_default_or_saved_or_quoted
+    enums:
+      0: Boot first menu entry (usually the latest OS).
+      saved: Boot previously booted OS (ensure SAVEDEFAULT is not false)
+    guidance: "Sets the default menu entry to boot. Can be:
+      \n: An index number (starting from 0).
+      \n: A full menu entry title (case-sensitive).
+      \n%ENUMS%"
+
+  GRUB_SAVEDEFAULT:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Do not automatically save the last booted entry.
+      'true': Save the last booted entry as the new default.
+    guidance: "Automatically saves the last selected menu entry as the new default.
+      \n: Cannot be 'false' when GRUB_DEFAULT='saved'.
+      \n: An absent value is treated as 'true'.
+      \n%ENUMS%"
+
+  GRUB_DISABLE_OS_PROBER:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Search for and automatically add other operating systems to the menu.
+      'true': Do not search for other operating systems.
+    guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
+      for installed operating systems (like Windows, other Linux distros)
+      and adding them to the boot menu.
+      \n%ENUMS%"
+
+  GRUB_DISABLE_RECOVERY:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Generate recovery mode boot entries.
+      'true': Suppress recovery mode entries from menu.
+    guidance: "Controls whether recovery mode boot entries appear in the menu.
+      \n%ENUMS%"
+
+  GRUB_DISABLE_SUBMENU:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Group older kernels in a submenu (cleaner).
+      'true': Show all kernel versions at top level (verbose).
+    guidance: "Controls whether older kernels are nested in a submenu.
+      \n%ENUMS%"
+
+Kernel Arguments:
+  GRUB_CMDLINE_LINUX:
+    default: '""'
+    edit_re: re_optional_quoted_string
+    enums: {}
+    guidance: "Kernel arguments for ALL normal/recovery boots.
+      \n: Typical uses: video options, disabling specific drivers, or custom parameters.
+      \n: Separate multiple options with a space."
+
+  GRUB_CMDLINE_LINUX_DEFAULT:
+    default: '"quiet splash"'
+    edit_re: re_optional_quoted_string
+    enums:
+      '"quiet splash"': Default Ubuntu/Debian setting (hides boot messages)
+      '"text"': Force text mode display early in boot process
+      '""': Verbose boot
+    guidance: "Kernel arguments ONLY for normal boots (not recovery).
+      \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
+      \n%ENUMS%"
+
+  GRUB_CMDLINE_LINUX_RECOVERY:
+    default: ''
+    edit_re: re_optional_quoted_string
+    enums: {}
+    guidance: "Kernel arguments specifically for recovery mode boots.
+      \n: If empty, uses GRUB_CMDLINE_LINUX.
+      \n: Use to override recovery mode behavior."
+
+  GRUB_EARLY_INITRD_LINUX_STOCK:
+    default: ''
+    edit_re: re_initrd_images
+    enums:
+      '': No early initrd (microcode updates disabled)
+      'intel-ucode.img': Intel CPU microcode updates (Arch/Fedora)
+      'amd-ucode.img': AMD CPU microcode updates (Arch/Fedora)
+      '"intel-ucode.img amd-ucode.img"': Both Intel and AMD microcode
+    guidance: "Early microcode initrd images loaded before main initrd.
+      \n: Used primarily for CPU microcode updates on Arch, Fedora, and similar distros.
+      \n: These are loaded very early in boot for security/stability fixes.
+      \n: Space-separated list of .img files (relative to /boot).
+      \n: Multi-image lists must be quoted so the shell keeps them together.
+      \n%ENUMS%"
+
+Visual Appearance:
+  GRUB_DISTRIBUTOR:
+    default: $(lsb_release -i -s)
+    edit_re: re_quoted_or_command_sub
+    enums: {}
+    guidance: "Sets the visible name of the operating system in the boot menu.
+      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
+      \n: Set to a custom string to change the display name."
+
+  GRUB_BACKGROUND:
+    default: ''
+    # edit_re: (?i)^(''|""|.*\.(png|jpg|jpeg|tga|bmp))?$
+    edit_re: re_quoted_image_file
+    enums: {}
+    guidance: "Full path and filename to a background image.
+      \n: Must be a JPEG or PNG file path.
+      \n: Recommended size is screen resolution.
+      \n: Leave blank for no background image."
+
+  GRUB_THEME:
+    default: ''
+    edit_re: re_theme_file
+    enums: {}
+    guidance: "Path to the theme.txt file for a custom GRUB theme.
+      \n: This overrides the background image setting (GRUB_BACKGROUND)."
+
+  GRUB_GFXMODE:
+    default: 640x480
+    edit_re: re_gfxmode
+    enums:
+      "640x480": Most widely available monitor resolution.
+      "800x600": Older standard monitor resolution.
+      "1024x768": Common contemporary monitor resolution.
+      "auto": Let GRUB choose a suitable monitor resolution.
+      "keep": Keep resolution set by BIOS/firmware
+    guidance: "Sets the resolution for the GRUB menu display.
+      \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
+      \n%ENUMS%"
+
+  GRUB_GFXPAYLOAD_LINUX:
+    default: ''
+    edit_re: re_gfxpayload
+    enums:
+      '': Use default (text mode).
+      text: Force text mode for kernel boot.
+      keep: Keep GRUB's graphics mode.
+    guidance: "Graphics mode passed to Linux kernel at boot.
+      \n: 'keep' may help with graphics driver issues.
+      \n%ENUMS%"
+
+  GRUB_VIDEO_BACKEND:
+    default: ''
+    edit_re:
+    enums:
+      '': Auto-detect (recommended).
+      vbe: VESA BIOS Extensions (legacy systems).
+      efi_gop: EFI Graphics Output Protocol (UEFI systems).
+      efi_uga: EFI UGA (older UEFI systems).
+      ieee1275_fb: IEEE 1275 framebuffer (PowerPC/SPARC).
+      coreboot_fb: Coreboot framebuffer (Chromebooks/embedded).
+    guidance: "Forces a specific graphics backend driver.
+      \n: Only change if having display issues with GRUB menu.
+      \n%ENUMS%"
+
+  GRUB_INIT_TUNE:
+    default: ''
+    edit_re: re_init_tune
+    enums:
+      '': No beep (silent).
+      '"480 440 1"': Single beep (A note).
+      '"480 440 1 0 1 440 1"': Double beep.
+      '"800 262 1 330 1 392 1 523 1"': Startup chime (C-E-G-C).
+      '"480 392 2"': Low alert tone.
+    guidance: "Speaker beep sequence when GRUB starts.
+      \n: Format: \"tempo freq1 duration1 freq2 duration2 ...\"
+      \n: 0 Hz = silence (for pauses between tones).
+      \n%ENUMS%"
+
+Security & Advanced:
+  GRUB_ENABLE_CRYPTODISK:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Disable encrypted disk support.
+      'true': Enable detection and unlocking of encrypted drives (e.g., LUKS).
+    guidance: "Enables GRUB to unlock encrypted disks to access
+      GRUB files and the boot partition which is
+      needed for systems with full disk encryption.
+      \n%ENUMS%"
+
+  GRUB_TERMINAL:
+    # A writable default: activating an absent parameter writes this value
+    # verbatim.  '#comment' is a documentation sentinel, not a GRUB value.
+    default: console
+    edit_re:
+    enums:
+      console: Text-mode terminal (no graphics).
+      gfxterm: Graphical terminal with theme and background support.
+      serial: Serial console for remote server management.
+      '"console serial"': Both text console and serial output.
+      '"gfxterm serial"': Both graphical and serial output.
+    guidance: "Sets both input and output terminal type for GRUB menu.
+      \n: 'console' disables graphical features (themes, backgrounds).
+      \n: Useful for servers, troubleshooting, or serial console access.
+      \n: Can combine multiple terminals (e.g., \"console serial\").
+      \n%ENUMS%"
+
+  GRUB_TERMINAL_INPUT:
+    default: console
+    edit_re:
+    enums:
+      console: Use the standard terminal/monitor.
+      serial: Use a serial port for input.
+    guidance: "Defines the input device for the GRUB command line and menu.
+      \nMost desktop users should use 'console'."
+
+
+  GRUB_DISABLE_LINUX_UUID:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Use UUIDs (Recommended - not prone breaks when disks moved)
+      'true': Use device names (e.g., /dev/sda1) instead of UUIDs
+    guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
+      (Universal Unique Identifier) for the root filesystem.
+      \n%ENUMS%"
+
+  GRUB_DISABLE_LINUX_PARTUUID:
+    default: 'false'
+    edit_re:
+    enums:
+      'false': Use PARTUUIDs when available (recommended).
+      'true': Use device names instead of partition UUIDs.
+    guidance: "Controls whether partition UUIDs are used.
+      \n: Similar to DISABLE_LINUX_UUID but for partition identifiers.
+      \n%ENUMS%"
+
+  GRUB_TERMINAL_OUTPUT:
+    default: ''
+    edit_re:
+    enums:
+      '': Auto-detect output device.
+      console: Standard terminal/monitor output.
+      serial: Serial port output.
+      gfxterm: Graphical terminal with theme support.
+    guidance: "Defines the output device for GRUB display.
+      \n: Pair with GRUB_TERMINAL_INPUT for serial console setups.
+      \n%ENUMS%"
+
+  GRUB_SERIAL_COMMAND:
+    default: ''
+    edit_re: re_serial_command
+    enums: {}
+    guidance: "Configuration for serial console connection.
+      \n: Format: \"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"
+      \n: Required when using serial terminal for server management."
+
+  GRUB_PRELOAD_MODULES:
+    default: ''
+    edit_re: re_init_tune
+    enums: {}
+    guidance: "Space-separated list of GRUB modules to load early.
+      \n: Example: \"lvm mdraid1x\" for LVM/RAID support.
+      \n: Usually auto-detected; only set if having boot issues."
+
+  GRUB_BADRAM:
+    default: ''
+    edit_re: re_init_tune
+    enums: {}
+    guidance: "Memory address ranges to exclude from use (faulty RAM workaround).
+      \n: Format: \"0xStartAddr,0xMask,0xStartAddr,0xMask,...\"
+      \n: Example: \"0x01234567,0xfefefefe,0x89abcdef,0xefefefef\"
+      \n: Only use if you have documented bad RAM addresses."
